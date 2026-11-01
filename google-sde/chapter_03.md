@@ -240,6 +240,57 @@ async function transferMoney(fromId, toId, amount) {
 
 ---
 
+## 9. Production Case Studies, System Drifts & Interview Traps
+
+### Production Case Study 1: The Missing Composite Index Database Meltdown
+* **The Incident**: A social media platform deployed a new feature displaying user orders: `SELECT * FROM orders WHERE user_id = 142 AND status = 'PENDING' ORDER BY created_at DESC LIMIT 10`. The table had 250,000,000 rows. Within 4 minutes of deployment, database CPU utilization surged to 100%, disk read IOPS hit maximum capacity, and database connection pools across all 40 backend microservices were exhausted. All customer checkouts ground to a halt.
+* **Root Cause**: The table only had an index on `status`. Because 20% of orders were `'PENDING'`, the query engine performed a **Bitmap Index Scan filtering 50,000,000 rows into memory and sorting on disk**!
+* **The Fix**:
+  ```sql
+  -- The Optimal Composite Index (Equality first, then Range/Sort):
+  CREATE INDEX CONCURRENTLY idx_orders_user_status_created 
+  ON orders (user_id, status, created_at DESC);
+  ```
+  Execution time dropped from **14,200 ms** to **0.4 ms** ($35,000\times$ speedup). Notice the use of `CONCURRENTLY`—running `CREATE INDEX` without it locks writes to the table!
+
+### Production Case Study 2: The Postgres 2-Billion Transaction ID (TXID) Wraparound Shutdown
+* **The Incident**: At a fintech startup handling millions of ledger writes, PostgreSQL suddenly refused to accept any `INSERT` or `UPDATE` queries, logging: `PANIC: database is not accepting commands to avoid wraparound data loss in database "postgres"`. The primary database was completely dead for 14 hours.
+* **Root Cause**: PostgreSQL uses a 32-bit transaction identifier (`txid`). Because $2^{31} \approx 2.14$ billion transactions, PostgreSQL uses a circular comparison logic. If old dead rows are not frozen by the background **Autovacuum daemon**, past transactions wrap around and appear to be in the *future*, threatening silent data loss. To prevent corruption, Postgres forcefully halts all write traffic.
+* **The Fix**:
+  1. Never disable or throttle `autovacuum` on high-write systems.
+  2. Actively monitor the metric `SELECT max(age(datfrozenxid)) FROM pg_database;` and alert when it crosses 1.2 billion.
+
+### Production System Drifts to Watch:
+1. **Replication Lag Drift (Read-After-Write Inconsistency)**:
+   In high-scale architectures, writes go to the Primary DB while reads go to Read Replicas. If a replica is 800ms behind due to network or write load:
+   * A user updates their shipping address on the checkout page (writes to Primary).
+   * User is redirected to confirmation page (reads from Replica).
+   * User screams: *"Why does it still show my old address?! Did my update fail?!"*
+   * **Fix**: Route reads to the Primary DB immediately following a mutation (Session Sticky Routing), or enforce read-after-write consistency tokens.
+2. **Schema Drift & DDL Lock Queues**:
+   Running `ALTER TABLE users ADD COLUMN phone VARCHAR(20) DEFAULT 'N/A';` in older databases acquires an **`ACCESS EXCLUSIVE` lock**. Even if the query only takes 500ms, all incoming reads and writes queue behind it. Once the connection pool reaches maximum capacity (`max_connections = 500`), the entire backend crashes.
+   * **Fix**: Always set lock timeouts (`SET lock_timeout = '2s';`), add nullable columns without defaults first, backfill in batches, and avoid holding exclusive locks.
+
+### FAANG Interview Scenarios & Traps:
+
+#### Scenario 1: "Why are B+ Trees preferred over Binary Search Trees (BST) or B Trees for database indexes?"
+* **Answer**:
+  1. **High Fanout (Block Size)**: A binary tree has 2 children per node (tree depth = $\log_2 N$). For 100M rows, depth is 27, requiring up to 27 disk reads! A B+ Tree node matches the OS page size (4 KB or 8 KB), holding hundreds of keys per node. Tree depth is only **3 or 4**, requiring just 3 disk seeks!
+  2. **Linked Leaf Range Queries**: In a B+ Tree, data records reside exclusively in the leaf nodes, which are connected by a bidirectional linked list. Range scans (`WHERE age BETWEEN 20 AND 30`) simply locate the starting leaf in $O(\log N)$ and sequentially scan the linked list in RAM without jumping up and down the tree!
+
+#### Scenario 2: "Under Repeatable Read isolation, can a Phantom Read still happen?"
+* **Answer**:
+  * **According to ANSI SQL Standard**: YES! Repeatable Read guarantees existing rows won't change, but a concurrent transaction inserting *new* matching rows can cause a "phantom" row to appear in a subsequent query.
+  * **In PostgreSQL MVCC Implementation**: **NO!** PostgreSQL's snapshot isolation at `REPEATABLE READ` takes a transaction-level snapshot at the start of the first non-transaction statement. It does not see newly inserted committed rows from other transactions.
+  * *The Trap*: If the interviewer asks about standard ANSI SQL vs. PostgreSQL, citing this difference demonstrates deep senior-level mastery.
+
+#### Scenario 3: "What is the difference between Optimistic Concurrency Control (OCC) and Pessimistic Concurrency Control?"
+* **Answer**:
+  * **Pessimistic Locking (`SELECT FOR UPDATE`)**: Acquires an exclusive row lock before reading. Prevents conflicts by making other transactions wait. Ideal for high-conflict financial transactions (e.g., ticket booking with 1 seat remaining).
+  * **Optimistic Locking (OCC)**: Reads without locks, using a `version` column (`UPDATE products SET stock = stock - 1, version = version + 1 WHERE id = 1 AND version = 5`). If 0 rows updated, someone else modified it; the application aborts and retries. Ideal for low-conflict high-throughput web apps.
+
+---
+
 ## Chapter 03 Checklist (Summary)
 
 Before moving to Chapter 04, verify that you can answer these:

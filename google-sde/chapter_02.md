@@ -286,16 +286,53 @@ When the browser's HTML parser encounters a `<script src="bundle.js">`:
 
 ---
 
-## 9. Interview Scenarios & Traps (Google & FAANG)
+## 9. Production Case Studies, System Drifts & Interview Traps
 
-### Scenario 1: "What is the difference between 502 Bad Gateway and 504 Gateway Timeout?"
-* **502 Bad Gateway**: The reverse proxy (NGINX) reached out to the backend (Python app), but the Python app was **dead, not running, or refused the connection immediately** (`Connection Refused`).
-* **504 Gateway Timeout**: The reverse proxy connected to the Python app, but the Python app **hung waiting for a slow SQL database query** and didn't respond within 30 seconds (`Request Timed Out`).
+### Production Case Study 1: The DNS TTL "Thundering Herd" Outage
+* **The Incident**: An e-commerce engineering team lowered their DNS TTL (Time To Live) to `0 seconds` (or `1s`) before a planned data center migration so traffic would switch instantly. When their flash sale went live at 10 AM (500,000 users/minute), their Authoritative DNS servers crashed under query volume. The domain stopped resolving globally for 3 hours.
+* **Why it Happened**: Setting TTL to 0 bypassed all recursive caching at local ISPs and Google DNS (`8.8.8.8`). Every single user HTTP request forced a recursive lookup to the authoritative nameservers, generating millions of redundant DNS queries per second.
+* **The Rule**: In production, never set TTL to 0. Lower TTL to 300 seconds (5 minutes) 24 hours *before* migration, execute migration, and restore TTL to 86400 seconds (24 hours).
 
-### Scenario 2: "What is the difference between HTTP/1.1, HTTP/2, and HTTP/3?"
-* **HTTP/1.1**: Suffered from **Head-of-Line (HoL) Blocking**. If you needed 20 images, the browser had to open 6 separate TCP connections, downloading them sequentially.
-* **HTTP/2**: Introduced **Multiplexing over a single TCP connection**. Multiple requests and responses can interleave simultaneously on one connection using binary framing.
-* **HTTP/3 (QUIC)**: Replaced TCP with **UDP-based QUIC protocol**. Eliminates TCP head-of-line blocking when packet loss occurs on mobile networks!
+### Production Case Study 2: The TLS Certificate HSTS Blackout
+* **The Incident**: A fintech company's website stopped loading for all users worldwide on a Sunday morning. The browser displayed `NET::ERR_CERT_DATE_INVALID` with no "Proceed Anyway" button.
+* **Root Cause**: An automated Certbot cron renewal job failed silently due to an unhandled HTTP challenge timeout. Because the site used **HSTS (HTTP Strict Transport Security)**, browsers strictly refused to let users bypass the security warning.
+* **The Fix**: 
+  1. Automated multi-provider alert at 30 days, 14 days, and 3 days before expiration.
+  2. Implement dual automated ACME validation via DNS TXT records rather than HTTP webroot challenges.
+
+### Production System Drifts to Watch:
+1. **Cache Invalidation Drift (Asset Desynchronization)**:
+   Deploying new frontend assets with fixed filenames (e.g. `bundle.js`) and `Cache-Control: max-age=86400` means existing users run old JavaScript code for 24 hours. If the backend API changes schema simultaneously, the old frontend sends deprecated payloads, throwing fatal exceptions for thousands of users.
+   * **The Industry Standard**: Never rely on `max-age` for mutable filenames. Use **Content Hashing** (`bundle.a8f9c1.js`) with `Cache-Control: max-age=31536000, immutable`.
+2. **TCP Slow Start Drift on Mobile/Satellite Networks**:
+   On high-latency networks (e.g., mobile 4G with 150ms RTT), TCP Slow Start limits initial throughput to 10 packets (~14 KB). Even if the user has 100 Mbps bandwidth, downloading a 200 KB initial payload requires multiple round-trips, taking over 1.2 seconds just for TCP window expansion!
+   * **Fix**: Keep the critical initial HTML payload under **14 KB** so it arrives in the very first TCP burst window!
+
+### FAANG Interview Scenarios & Traps:
+
+#### Scenario 1: "What is the difference between 502 Bad Gateway and 504 Gateway Timeout?"
+* **502 Bad Gateway**: The reverse proxy (NGINX) reached out to the backend (Python/Node app), but the backend was **dead, not running, or refused the connection immediately** (`Connection Refused`).
+* **504 Gateway Timeout**: The reverse proxy successfully opened a TCP connection to the backend, but the backend **hung waiting for a slow SQL query or third-party API** and failed to respond before NGINX's `proxy_read_timeout` expired.
+
+#### Scenario 2: "What is the difference between HTTP/1.1, HTTP/2, and HTTP/3?"
+* **HTTP/1.1**: Suffered from **Head-of-Line (HoL) Blocking** at the application layer. Browsers had to open up to 6 separate TCP connections per domain to download assets in parallel.
+* **HTTP/2**: Introduced **Multiplexing over a single TCP connection**. Multiple requests and responses interleave concurrently using binary framing.
+* **HTTP/3 (QUIC)**: Replaced TCP with **UDP-based QUIC protocol**. Eliminates TCP transport-level head-of-line blocking when packet loss occurs on mobile networks!
+
+#### Scenario 3: "Why does HTTPS use asymmetric encryption during handshake, but switches to symmetric encryption for data transport?"
+* **Answer**: **CPU Computational Cost!** Asymmetric algorithms (RSA, ECDHE) use complex modular exponentiation and elliptic curve point multiplication, which are roughly **$1,000\times$ slower** than symmetric block ciphers like AES-GCM. Asymmetric keys are used only once during the TLS handshake to safely agree upon a shared session secret; from then on, hardware-accelerated AES encrypts streaming data at gigabit speeds with minimal CPU usage.
+
+#### Scenario 4: "What triggers a Browser Reflow (Layout) vs. Repaint, and what is Layout Thrashing?"
+* **Answer**:
+  * **Repaint**: Changing visual appearance without changing geometry (e.g. `color`, `background-color`, `visibility`). Fast!
+  * **Reflow (Layout)**: Changing geometric properties (e.g. `width`, `height`, `margin`, `font-size`) forces the browser to recalculate the coordinates of every element on the entire page. Expensive!
+  * **Layout Thrashing**: Alternating between writing DOM styles and reading layout dimensions in a loop:
+    ```javascript
+    // DANGEROUS: Forces synchronous reflow on EVERY iteration!
+    for (let i = 0; i < cards.length; i++) {
+        cards[i].style.width = box.offsetWidth + 'px'; // Read forces reflow!
+    }
+    ```
 
 ---
 

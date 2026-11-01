@@ -211,6 +211,50 @@ readStream.pipe(writeStream);
 
 ---
 
+## 7. Production Case Studies, I/O Drifts & Interview Traps
+
+### Production Case Study 1: The 5GB CSV Ingest V8 Heap OOM Crash
+* **The Incident**: A financial analytics portal offered a feature to export quarterly transaction statements. A client requested their annual ledger (a 4.8 GB CSV file). Seconds after triggering the download, the backend Node.js worker crashed with:
+  `FATAL ERROR: Ineffective mark-compacts near heap limit Allocation failed - JavaScript heap out of memory`
+* **Root Cause**: The API endpoint used `const data = await fs.promises.readFile(filePath)`. By default, the V8 JavaScript engine caps maximum heap allocation at ~1.4 GB on 64-bit systems. Reading a 4.8 GB file attempted to allocate an array buffer far exceeding the heap ceiling, crashing the process immediately.
+* **The Fix**: Switch to streaming response pipelines:
+  ```javascript
+  app.get('/download/ledger', (req, res) => {
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', 'attachment; filename="ledger.csv"');
+      const stream = fs.createReadStream(largeFilePath);
+      stream.pipe(res); // Streams chunks directly to network with 25MB RAM!
+  });
+  ```
+
+### Production Case Study 2: The Windows Backslash Path Separator CI Failure
+* **The Incident**: A developer implemented a document indexing feature on their Windows laptop. All unit tests passed locally. When merged to `main` and deployed to an Ubuntu production cluster, every document indexing job threw: `FileNotFoundError: [Errno 2] No such file or directory: 'temp\\docs\\report.pdf'`.
+* **Root Cause**: The code used string interpolation: `file_path = f"temp\\docs\\{filename}"`. Windows treats both `\` and `/` as valid path separators. However, Linux treats `\` as a literal character in the file name! Linux searched for a single file named `"temp\docs\report.pdf"` inside the root folder instead of navigating into subdirectories.
+* **The Rule**: Never concatenate paths with raw string slashes! Always use `pathlib.Path` or `os.path.join()` in Python, and `path.join()` in Node.js.
+
+### I/O Drifts to Watch:
+1. **Encoding Drift (The Windows Charmap Trap)**:
+   In Python on Windows, omitting `encoding="utf-8"` in `open("data.txt")` causes Python to default to the legacy OS codepage (e.g. `cp1252` or `charmap`). As long as test data contains basic English ASCII, tests pass. The moment an international customer enters an emoji (`🚀`) or European accented letter (`é`), production throws `UnicodeDecodeError: 'charmap' codec can't decode byte 0x9d`.
+   * **Fix**: Always enforce `encoding="utf-8"` on every file operation.
+2. **File Descriptor Leak Drift via Exception Jumps**:
+   If an exception occurs between opening a file handle and calling `.close()`, the descriptor remains held by the OS until the garbage collector runs. Under high traffic, this rapidly exhausts the process `ulimit -n`, dropping incoming network sockets.
+   * **Fix**: Context managers (`with` in Python) and `try...finally` in JS are mandatory.
+
+### FAANG Interview Scenarios & Traps:
+
+#### Scenario 1: "What is the difference between `path.join('/a', '/b')` and `path.resolve('/a', '/b')` in Node.js?"
+* **Answer**:
+  * `path.join('/a', '/b')`: Simply concatenates path segments using the platform separator, returning `'/a/b'`.
+  * `path.resolve('/a', '/b')`: Processes arguments from right to left like a series of `cd` shell commands until an absolute path is formed. Because `'/b'` begins with a leading root slash, `resolve` treats it as the absolute root and discards `'/a'`, returning `'/b'`!
+
+#### Scenario 2: "What is Stream Backpressure in Node.js, and what happens if you ignore it?"
+* **Answer**: Backpressure occurs when the **data source (Readable Stream)** produces data faster than the **destination (Writable Stream)** can write (e.g., fast SSD reading at 500 MB/s sending data to a slow 1 MB/s mobile client).
+  * If you ignore `writeStream.write(chunk) === false`, the unwritten chunks accumulate in the internal Node.js memory buffer.
+  * In minutes, buffer consumption explodes to gigabytes of RAM, causing process OOM crashes!
+  * Using `.pipe()` or `stream.pipeline()` automatically monitors backpressure, pausing the reader when the buffer fills and resuming when the `'drain'` event fires.
+
+---
+
 ## Chapter 02 Checklist (Summary)
 
 Before moving to Chapter 03, verify that you can answer these:

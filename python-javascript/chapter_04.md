@@ -202,6 +202,62 @@ A **Heisenbug** is a bug that **disappears as soon as you add a `print()` or `co
 
 ---
 
+## 7. Production Case Studies, Observability Drifts & Interview Traps
+
+### Production Case Study 1: The Silent Node.js Unhandled Rejection Crash
+* **The Incident**: A high-traffic payment processing service crashed abruptly during peak sales hours. The container restarted repeatedly, but no error appeared in the standard application error logs.
+* **Root Cause**: An asynchronous background fire-and-forget task inside an Express route failed:
+  ```javascript
+  app.post('/checkout', async (req, res) => {
+      res.json({ status: "Processing" });
+      // BUG: Fire-and-forget async call without await or .catch()!
+      sendAnalyticsEvent(req.body);
+  });
+  ```
+  When the analytics service timed out, `sendAnalyticsEvent` threw an unhandled rejected promise. Starting in Node.js 16+, **unhandled promise rejections terminate the process with exit code 1**!
+* **The Fix**:
+  1. Always handle promise rejections at the callsite: `sendAnalyticsEvent(req.body).catch(err => logger.error("Analytics failed", { err }))`.
+  2. Implement global process safety hooks:
+     ```javascript
+     process.on('unhandledRejection', (reason, promise) => {
+         logger.error('CRITICAL: Unhandled Rejection at:', { promise, reason });
+     });
+     ```
+
+### Production Case Study 2: The Log Volume Disk-Full Server Blackout
+* **The Incident**: An entire production Kubernetes node went into `NotReady` status. Sshing into the node revealed disk utilization was at 100%. Databases, Redis caches, and backend services hosted on the node all died simultaneously.
+* **Root Cause**: A third-party payment gateway had a minor network blip. A retry loop in a backend service logged the full request/response body of every failed retry without exponential backoff or rate-limiting. It generated **80,000 log lines per second**, creating a 60 GB log file in `/var/log` within 18 minutes, completely starving the Linux kernel of disk blocks.
+* **The Guardrails**:
+  1. Always configure OS-level **Log Rotation** (`logrotate`) with maximum file size limits and automatic compression.
+  2. Implement log sampling and circuit breakers in your logger to drop duplicate logs when error rates surge above normal thresholds.
+
+### Observability Drifts to Watch:
+1. **Trace Context Propagation Loss**:
+   When Service A calls Service B over HTTP, forgetting to copy the incoming `X-Request-ID` or W3C `traceparent` header into the outgoing HTTP request breaks the trace chain. The log aggregator sees two completely unrelated requests, making it impossible to diagnose distributed latencies across microservice hops.
+2. **Synchronous `console.log()` Event Loop Starvation**:
+   In Node.js, writing to `process.stdout` is synchronous when redirected to files or pipes on many platforms. Emitting thousands of `console.log()` statements per second blocks the single event loop thread, introducing 200–500ms of artificial latency to active user HTTP requests.
+   * **Fix**: Use asynchronous, buffered structured loggers like **Pino** or **Winston** with stream workers.
+
+### FAANG Interview Scenarios & Traps:
+
+#### Scenario 1: "How do you diagnose a production Python service consuming 100% CPU without restarting it or attaching a debugger?"
+* **Answer**: You cannot add `breakpoint()` or restart because the stuck state would be lost. Instead, use non-intrusive sampling profilers like **`py-spy`**:
+  ```bash
+  # Instantly displays a live top-like view of active Python functions!
+  py-spy top --pid <PID>
+  
+  # Or generate an SVG Flame Graph of running threads without stopping the process:
+  py-spy record -o profile.svg --pid <PID>
+  ```
+  `py-spy` reads process memory directly via Linux `process_vm_readv` syscalls with negligible (< 1%) CPU overhead.
+
+#### Scenario 2: "What is the difference between Error Logging and Distributed Tracing?"
+* **Answer**:
+  * **Logging**: Records discrete events at a specific point in time (*"User 42 failed to purchase ticket"*). Logs are unstructured or structured text files tied to a single process.
+  * **Distributed Tracing**: Follows the end-to-end journey of a single user request across 20 different microservices, databases, and message queues. Uses a unique **Trace ID** and nested **Span IDs** to measure latency per service boundary.
+
+---
+
 ## Chapter 04 Checklist (Summary)
 
 Before concluding Part 0 of the Python & JavaScript track, verify that you can answer these:

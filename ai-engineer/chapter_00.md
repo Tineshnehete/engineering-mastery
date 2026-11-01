@@ -390,6 +390,51 @@ for i in range(len(X)):
 
 ---
 
+## 9. Production Case Studies, Vector Drifts & Interview Traps
+
+### Production Case Study 1: The Softmax `NaN` Numerical Overflow Crash
+* **The Incident**: During production deployment of an LLM inference microservice, responses suddenly turned into empty strings or bizarre repetitive punctuation. Server logs showed tensor output values were filled with `NaN` (Not a Number).
+* **Root Cause**: The developer implemented naive Softmax:
+  ```python
+  # DANGEROUS: Causes numerical overflow!
+  def naive_softmax(x):
+      return np.exp(x) / np.sum(np.exp(x))
+  ```
+  When the model processed a long prompt, unnormalized attention logits reached values like `x = [100, 850, 1000]`.
+  In floating point math, $e^{1000} = \infty$ (`inf`). Computing `inf / inf` results in **`NaN`**! Once a single `NaN` enters a matrix multiplication, it poisons every downstream layer.
+* **The Fix**: The **Numerically Stable Softmax Trick** (subtracting the row maximum before exponentiation):
+  ```python
+  def safe_softmax(x):
+      e_x = np.exp(x - np.max(x, axis=-1, keepdims=True))
+      return e_x / np.sum(e_x, axis=-1, keepdims=True)
+  ```
+  Since the maximum value becomes $e^0 = 1.0$, values never overflow!
+
+### Production Case Study 2: The Zero-Weight Initialization Symmetry Collapse
+* **The Incident**: A computer vision team trained a multi-layer neural network on GPU for 48 hours. The training loss refused to decrease, staying flat at high error.
+* **Root Cause**: The engineer initialized weights using `W = np.zeros((d_in, d_out))`.
+* **The Symmetry Trap**: When all weights start at zero, every neuron in the hidden layer computes the exact same linear combination ($0 \times x = 0$), produces the exact same activation, and receives the exact same gradient during backpropagation! The neurons remain identical copies of each other, unable to learn distinct features.
+* **The Rule**: Weights must always be initialized with small random values (e.g. He/Xavier initialization). Biases can safely start at 0.
+
+### Vector Drifts to Watch:
+1. **Embedding Dimension Mismatch Drift**:
+   An engineering team updates their embedding provider from OpenAI `text-embedding-ada-002` (1536 dimensions) to `text-embedding-3-large` (3072 dimensions). Because vector databases like `pgvector` or Pinecone enforce fixed column dimensions, incoming queries crash with dimension mismatch errors until the entire vector index is dropped and re-ingested.
+2. **Document Length Cosine Drift**:
+   Raw Dot Product measures both **angle** and **magnitude (length)**. A 10,000-word book chapter will have a far larger vector magnitude than a 10-word FAQ sentence. If you search using raw dot products, long documents artificially dominate search rankings regardless of relevance.
+   * **Fix**: Always normalize vectors to unit length ($\|v\| = 1$) so Dot Product equals **Cosine Similarity**!
+
+### FAANG Interview Scenarios & Traps:
+
+#### Scenario 1: "Why does changing the Temperature parameter in ChatGPT alter its creativity and randomness?"
+* **Answer**: Temperature $T$ scales the logits before Softmax: $P_i = \frac{e^{z_i / T}}{\sum e^{z_j / T}}$.
+  * **Low Temperature ($T = 0.1$)**: Divides logits by $0.1$ (multiplies by 10). The difference between the highest logit and the second-highest logit becomes enormous. Softmax probability for the top token concentrates to $99.9\%$, making outputs deterministic and repetitive.
+  * **High Temperature ($T = 1.5$)**: Shrinks differences between logits. Softmax flattens out, giving rare words a higher probability of being sampled, producing creative or chaotic text.
+
+#### Scenario 2: "What is the mathematical proof that stacking 100 linear layers collapses into a single layer?"
+* **Answer**: A linear layer is $y = W_1 x$. The next layer is $z = W_2 y = W_2(W_1 x) = (W_2 W_1) x$. Because matrix multiplication is associative and closed, the product of two matrices $W_2 W_1$ is simply another single matrix $W_{combined}$. Stacking 100 linear layers without non-linear activation functions is mathematically identical to a single matrix multiplication!
+
+---
+
 ## Checkpoint Exercise
 
 1. How does a computer know that `"puppy"` and `"dog"` are related, but `"airplane"` is not? *(Hint: Dense embedding vectors and Dot Product).*

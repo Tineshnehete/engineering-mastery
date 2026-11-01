@@ -344,6 +344,57 @@ def add_bonus_points(user):
 
 ---
 
+## 6. Production Case Studies & System Drifts
+
+### Case Study 1: The 32-Bit Integer Overflow Outages
+* **The YouTube "Gangnam Style" Outage (2014)**:
+  YouTube originally stored video view counts as a **32-bit signed integer** (maximum value $2^{31}-1 = 2,147,483,647$). When the music video *"Gangnam Style"* surpassed 2.14 billion views, the counter overflowed to $-2,147,483,648$, causing view counts to display negative numbers and breaking recommendation sorting. Google had to hurriedly upgrade the counter to a 64-bit integer ($2^{63}-1 \approx 9.22 \times 10^{18}$).
+* **The Boeing 787 248-Day Generator Control Bug (FAA Airworthiness Directive 2015-09-07)**:
+  The generator control units (GCUs) on the Boeing 787 Dreamliner tracked operating time using an internal 32-bit signed counter in hundredths of a second ($0.01$s). After continuous power for $2^{31}-1$ centiseconds ($\approx 248.55$ days), the counter overflowed into negative numbers, causing software fault protection to trip and simultaneously cut all electrical power mid-flight! The mitigation required rebooting the airplanes' main electrical systems before reaching 248 days of uptime.
+
+### Case Study 2: The Cache Locality 12x Latency Spike
+A team observed their matrix image processing service suddenly slowing down by $1,200\%$ after a refactor:
+```python
+# SLOW: Column-Major Traversal (Cache Thrashing)
+# Jumps 1,000,000 bytes in memory on every step, causing constant L1/L2 cache misses!
+total = 0
+for col in range(cols):
+    for row in range(rows):
+        total += matrix[row][col]
+
+# FAST (12x Faster!): Row-Major Traversal (Spatial Locality)
+# Sequential memory access fetches contiguous 64-byte Cache Lines into CPU L1 cache!
+total = 0
+for row in range(rows):
+    for col in range(cols):
+        total += matrix[row][col]
+```
+* **Lesson**: Hardware reads memory in **64-byte Cache Lines**, not individual bytes. Sequential access stays in ultrafast L1 cache (~1 ns), while random or column jumps stall on main RAM (~100 ns).
+
+### Production Drifts to Watch:
+1. **Memory Drift (Virtual Memory Swapping)**:
+   When applications slowly leak heap memory, the OS runs out of physical RAM and begins **swapping pages to disk**. Memory access latency instantly shifts from **100 ns (RAM)** to **10,000,000 ns (10 ms on disk)**—a $100,000\times$ performance collapse known as **Thrashing**.
+2. **Clock Drift (Wall-Clock vs. Monotonic Time)**:
+   Servers periodically synchronize time with NTP (Network Time Protocol). When NTP adjusts for clock drift, **system wall-clock time can jump backwards**! If your rate limiter or timeout logic calculates duration using `Date.now()` or `time.time()`, `end_time - start_time` can evaluate to a **negative number**, causing infinite loops or bypassed rate limits.
+   * **Fix**: Always measure durations using **Monotonic Clocks** (`time.monotonic()` in Python, `process.hrtime()` in Node.js).
+
+---
+
+## 7. FAANG Interview Scenarios & Traps (Ground Zero)
+
+### Scenario 1: "Can a Memory Leak happen in a language with an automatic Garbage Collector like Python or JavaScript?"
+* **Answer**: **YES!** A garbage collector only frees objects that have **zero reachable references** from the root scope. If an object is accidentally retained in a global array, a singleton cache without an eviction policy (e.g. unbounded dict), or a forgotten event listener (`window.addEventListener`), the GC considers it "in use" forever. Memory will steadily climb until the process crashes with `OOM (Out Of Memory)`.
+
+### Scenario 2: "Why is allocating memory on the Stack orders of magnitude faster than the Heap?"
+* **Answer**: 
+  1. **Stack allocation is a single CPU instruction**: The CPU simply shifts the Stack Pointer register (`SP`) down by $N$ bytes (pointer arithmetic in 1 clock cycle $\approx 0.3$ ns).
+  2. **Heap allocation requires complex OS searching**: The runtime allocator must traverse free-memory link lists to find a contiguous block of memory, handle fragmentation, update metadata tables, and acquire thread locks in multi-threaded environments (~50–200 ns).
+
+### Scenario 3: "Why does array lookup `arr[i]` take O(1) time while linked list lookup takes O(N)?"
+* **Answer**: An array is a **contiguous block of memory**. The CPU calculates the exact memory address in a single multiplication step: $\text{Address} = \text{Base} + (i \times \text{Element Size})$. In contrast, linked list nodes are scattered across random Heap memory locations; to find the $i$-th element, the CPU must physically follow $i$ pointers sequentially, jumping through random RAM addresses.
+
+---
+
 ## Checkpoint Exercise (Test Your Understanding)
 
 Before moving to Chapter 01, answer these questions in your head:

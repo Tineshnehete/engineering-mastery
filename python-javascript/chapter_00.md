@@ -431,6 +431,66 @@ Open Chrome browser, type `chrome://inspect`, click "Inspect", and you have a fu
 
 ---
 
+## 7. Production Case Studies, Runtime Drifts & Interview Traps
+
+### Production Case Study 1: The Python Cyclic Reference Memory Leak
+* **The Incident**: A high-throughput FastAPI service gradually consumed 4 GB of RAM over 3 days until the Linux kernel OOM-killer terminated the pod. Profiling showed memory was dominated by `RequestContext` objects.
+* **Root Cause**: The application created a circular reference: a parent `RequestContext` held a reference to a child `DatabaseSession`, while the child held a reference back to the parent:
+  ```python
+  class RequestContext:
+      def __init__(self):
+          self.session = DatabaseSession(self) # Cyclic reference!
+  ```
+  Python's primary **Reference Counter** could never drop to zero because each object had a refcount of 1! Although Python's cyclic Garbage Collector (GC) eventually runs, high allocation rates outpaced the cyclic collection thresholds (`gc.get_threshold()`).
+* **The Fix**: Use `weakref` to break the cycle without preventing cleanup:
+  ```python
+  import weakref
+  class DatabaseSession:
+      def __init__(self, context):
+          self.context = weakref.ref(context) # Non-owning weak pointer!
+  ```
+
+### Production Case Study 2: The Node.js Event Loop Freeze via Synchronous Hashing
+* **The Incident**: An authentication service handling 2,000 requests/sec suffered a 99% drop in throughput. All health check endpoints failed with HTTP 504 gateway timeouts.
+* **Root Cause**: A developer used `bcrypt.hashSync(password, 12)` inside a login endpoint. Computing bcrypt with 12 rounds is CPU-bound and takes ~250ms of pure computation. Because Node.js is **single-threaded**, computing 4 simultaneous logins froze the entire Node.js event loop for 1 full second, blocking all other 2,000 incoming network I/O requests!
+* **The Fix**: Always use the asynchronous non-blocking version (`await bcrypt.hash(password, 12)`), which delegates the CPU work to the background `libuv` threadpool.
+
+### Runtime Drifts to Watch:
+1. **The Truthiness Drift (`0` vs. `null` in validation)**:
+   In JavaScript, `0`, `""`, and `false` are all falsy:
+   ```javascript
+   function setDiscount(percentage) {
+       // BUG: If percentage is 0 (valid zero discount), it defaults to 10%!
+       const discount = percentage || 10; 
+   }
+   // FIX: Use Nullish Coalescing (??) which only triggers on null or undefined!
+   const discount = percentage ?? 10;
+   ```
+2. **IEEE 754 Floating-Point Precision Drift**:
+   Computers store decimal numbers in binary floating point. `0.1 + 0.2 === 0.30000000000000004`. If your financial app calculates currency balances using floats, penny rounding errors accumulate into thousands of dollars of ledger mismatch.
+   * **Fix**: In financial systems, store money in **integer cents** (e.g. `$10.50` stored as `1050`), or use specialized decimal libraries (`decimal.Decimal` in Python, `decimal.js` in JS).
+
+### FAANG Interview Scenarios & Traps:
+
+#### Scenario 1: "Why does `def append_to(item, target_list=[])` share items across calls in Python?"
+* **Answer**: In Python, **default arguments are evaluated ONCE at function definition time**, not each time the function is invoked! The list `[]` is created when the module is imported into memory; subsequent calls modify that same shared heap object.
+  ```python
+  # The Mandatory Idiom:
+  def append_to(item, target_list=None):
+      if target_list is None:
+          target_list = []
+      target_list.append(item)
+      return target_list
+  ```
+
+#### Scenario 2: "What is the difference between Microtasks and Macrotasks in the Node.js Event Loop?"
+* **Answer**:
+  * **Macrotasks**: `setTimeout`, `setInterval`, `setImmediate`, I/O callbacks.
+  * **Microtasks**: `process.nextTick`, `Promise.then/catch/finally`, `queueMicrotask`.
+  * **The Execution Priority**: After *every single macrotask* completes, Node.js **completely drains the entire Microtask queue** before picking up the next macrotask! If microtasks continuously schedule more microtasks, macrotasks (and network I/O) are starved indefinitely!
+
+---
+
 ## Checkpoint Exercise
 
 1. In JavaScript, if you write `if (my_array)` where `my_array = []`, will the condition evaluate to `true` or `false`? How does Python treat an empty list?

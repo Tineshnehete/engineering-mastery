@@ -213,6 +213,57 @@ git checkout -b my-recovered-branch 91b4f2a
 
 ---
 
+## 9. Production Case Studies, System Drifts & Interview Traps
+
+### Production Case Study 1: The $30,000 AWS Secret Leak in Git History
+* **The Incident**: A junior engineer accidentally committed an `.env` file containing AWS root credentials. Recognizing the mistake, they ran:
+  ```bash
+  rm .env
+  git add .env
+  git commit -m "Remove secret .env file"
+  git push origin main
+  ```
+  Within 90 seconds, public scraping bots discovered the secret and spawned dozens of GPU instances for cryptocurrency mining, racking up a $30,000 AWS bill overnight.
+* **Why the "Removal" Failed**: Git is an append-only directed acyclic graph (DAG). The second commit simply created a new Tree that didn't list `.env`. **The original commit and its underlying Blob object containing the secret still existed in Git history!** Anyone running `git log` or viewing past commits on GitHub could view the credentials with one click.
+* **The Fix**:
+  1. Immediately rotate the leaked credentials in AWS IAM.
+  2. Rewrite repository history using `git-filter-repo` (or BFG Repo-Cleaner) to purge the blob hash from all commits:
+     ```bash
+     git filter-repo --invert-paths --path .env
+     git push origin --force --all
+     ```
+
+### Production Case Study 2: The Staging Branch Overwrite (`git push --force`)
+* **The Incident**: An engineer rebasing their feature branch locally typed `git push --force origin staging` instead of their feature branch. Three weeks of merged pull requests from 12 engineers vanished from the staging environment, breaking active QA testing.
+* **The Root Cause**: `git push --force` tells the remote server: *"Set your branch pointer to my exact commit, no matter what."* Any commits on remote that weren't in the local engineer's tree were instantly orphaned.
+* **The Guardrails**:
+  1. **Branch Protection Rules**: Enable branch protection on `main`, `master`, and `staging` in GitHub/GitLab to block force-pushes entirely.
+  2. **`--force-with-lease`**: If force-pushing a personal branch, always use `git push --force-with-lease`. This checks if anyone else has pushed commits to the remote branch since your last fetch; if so, it aborts the push!
+
+### Production System Drifts to Watch:
+1. **The Detached HEAD Drift**:
+   Running `git checkout <commit_hash>` puts Git in **Detached HEAD** mode—HEAD points directly to a commit, not a named branch pointer. If you write code, stage files, and make 5 commits in this state, and then run `git checkout main`, your 5 new commits are detached! They won't appear on any branch and will be purged by `git gc` after 30 days unless rescued via `git reflog`.
+2. **Submodule SHA Desynchronization Drift**:
+   Git submodules do not track a branch; they track a **specific commit SHA**. If teammate A updates the submodule and pushes code, but forgets to push the commit inside the submodule repository, teammate B's CI/CD build crashes with `fatal: reference is not a tree`.
+
+### FAANG Interview Scenarios & Traps:
+
+#### Scenario 1: "What is the difference between `git merge` and `git rebase`?"
+* **Answer**:
+  * **Merge**: Preserves complete historical context by creating a new **Merge Commit** with two parents ($P_1$ and $P_2$). It is non-destructive and safe for shared team branches.
+  * **Rebase**: Takes the commits from your branch, finds the common ancestor, and **replays each commit on top of the target branch**, assigning brand-new SHA commit hashes. It creates a clean linear history without merge bubbles, but rewrites history!
+
+#### Scenario 2: "What is the 3-Way Merge Base, and when does a Merge Conflict happen?"
+* **Answer**: A 3-way merge compares three states: the **Common Ancestor (LCA)**, your **Local Branch (HEAD)**, and the **Incoming Branch (MERGE_HEAD)**.
+  * If file line 10 was changed by local, but untouched by incoming relative to LCA $\to$ Git auto-merges local's change.
+  * If file line 10 was changed by incoming, but untouched by local relative to LCA $\to$ Git auto-merges incoming's change.
+  * **Merge Conflict**: Only occurs when **BOTH branches modified the exact same lines differently** compared to the LCA! Git cannot guess which human's intention is correct, so it halts and asks the developer.
+
+#### Scenario 3: "What does `git cherry-pick` do under the hood?"
+* **Answer**: It calculates the **diff** between the target commit and its immediate parent, and attempts to apply that exact diff as a brand new commit on top of the current `HEAD`.
+
+---
+
 ## Chapter 04 Checklist (Summary)
 
 Before concluding Part 0, verify that you can answer these:
