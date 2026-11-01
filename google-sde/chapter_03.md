@@ -273,6 +273,16 @@ async function transferMoney(fromId, toId, amount) {
 
 ### FAANG Interview Scenarios & Traps:
 
+```mermaid
+flowchart LR
+    subgraph DeadlockCycle["Wait-For Graph (Deadlock Cycle)"]
+        T1["Transaction 1 (Holds Lock on Row A)"] -->|"Waiting for"| LockB["Row B"]
+        T2["Transaction 2 (Holds Lock on Row B)"] -->|"Waiting for"| LockA["Row A"]
+        LockB --> T2
+        LockA --> T1
+    end
+```
+
 #### Scenario 1: "Why are B+ Trees preferred over Binary Search Trees (BST) or B Trees for database indexes?"
 * **Answer**:
   1. **High Fanout (Block Size)**: A binary tree has 2 children per node (tree depth = $\log_2 N$). For 100M rows, depth is 27, requiring up to 27 disk reads! A B+ Tree node matches the OS page size (4 KB or 8 KB), holding hundreds of keys per node. Tree depth is only **3 or 4**, requiring just 3 disk seeks!
@@ -288,6 +298,48 @@ async function transferMoney(fromId, toId, amount) {
 * **Answer**:
   * **Pessimistic Locking (`SELECT FOR UPDATE`)**: Acquires an exclusive row lock before reading. Prevents conflicts by making other transactions wait. Ideal for high-conflict financial transactions (e.g., ticket booking with 1 seat remaining).
   * **Optimistic Locking (OCC)**: Reads without locks, using a `version` column (`UPDATE products SET stock = stock - 1, version = version + 1 WHERE id = 1 AND version = 5`). If 0 rows updated, someone else modified it; the application aborts and retries. Ideal for low-conflict high-throughput web apps.
+
+#### Scenario 4: "How does the Write-Ahead Log (WAL) guarantee Durability during sudden power loss?"
+* **Answer**:
+  * Writing modified 8 KB data pages to random disk locations is slow ($O(N)$ random I/O).
+  * Instead, the database appends a compact record of the change to the **sequential Write-Ahead Log file (WAL)** and calls `fsync()` to force it to physical disk platter before acknowledging `COMMIT` to the client!
+  * If power is cut 1 millisecond later, the dirty pages in RAM are lost, but on boot, the database reads the WAL sequentially from the last **Checkpoint** and **replays the operations (Redo Log)** to reconstruct the exact committed state.
+
+#### Scenario 5: "What is the difference between a Clustered Index and a Secondary Index?"
+* **Answer**:
+  * **Clustered Index (Primary Key in MySQL InnoDB)**: The leaf nodes of the B+ Tree contain the **actual physical row data**. There can only be ONE clustered index per table because data can only be physically sorted on disk in one order.
+  * **Secondary Index**: Leaf nodes do NOT store the row data; they store the indexed column value plus a **pointer (or Primary Key)** back to the clustered index. Looking up by a secondary index requires two steps: traverse secondary B+ Tree $\to$ take PK $\to$ traverse clustered B+ Tree (**Index Lookup / Bookmark Lookup**).
+
+#### Scenario 6: "Explain the Leftmost Prefix Rule for composite index `(status, country, created_at)`."
+* **Answer**: The B+ Tree sorts keys hierarchically: first by `status`, ties broken by `country`, further ties broken by `created_at`.
+  * `WHERE status = 'ACTIVE' AND country = 'IN'` $\to$ Uses index fully!
+  * `WHERE status = 'ACTIVE'` $\to$ Uses index!
+  * `WHERE country = 'IN'` $\to$ **CANNOT use index!** (Without `status`, countries are scattered across the entire tree, forcing an $O(N)$ full table scan).
+  * *Rule*: A composite index can only be used if the query filters include the leftmost column in the index definition.
+
+#### Scenario 7: "When does the database query planner choose Hash Join vs Nested Loop vs Sort-Merge Join?"
+* **Answer**:
+  * **Nested Loop Join**: For every row in Table A, lookup Table B using an index. Optimal when Table A is tiny (< 100 rows) and Table B has an indexed foreign key ($O(M \log N)$).
+  * **Hash Join**: Hashes the smaller table into an in-memory hash table, then streams the larger table through it. Optimal for large unindexed equality joins (`A.id = B.id`) ($O(M + N)$).
+  * **Sort-Merge Join**: Both tables are already sorted (e.g. via B+ Tree index). The engine walks two pointers down both lists simultaneously. Optimal for large sorted tables or range joins ($O(M + N)$).
+
+#### Scenario 8: "What is MVCC (Multi-Version Concurrency Control), and why does reading never block writing in Postgres?"
+* **Answer**:
+  * In older databases, reading a row required acquiring a Shared Read Lock, which blocked concurrent writers.
+  * In **MVCC (Postgres/MySQL)**: Updating a row **does not overwrite the old row in-place**! It writes a brand-new row version with transaction timestamps (`xmin`, `xmax`).
+  * When a `SELECT` runs, it simply reads the snapshot version of the row that was committed before its transaction started. Readers never wait for writers, and writers never wait for readers!
+
+#### Scenario 9: "How does a database detect and resolve Deadlocks?"
+* **Answer**:
+  * The database maintains an internal **Wait-For Graph** where nodes are active transactions and directed edges indicate which transaction is waiting for a lock held by another.
+  * A background daemon checks for **directed cycles** in the graph (e.g. using Tarjan's or DFS cycle detection every 1 second).
+  * When a cycle is detected, the engine selects the **cheapest victim transaction** (least amount of changes written) and forcefully aborts it (`ROLLBACK`), returning error `40P01: deadlock detected` so the remaining transaction can finish.
+
+#### Scenario 10: "Why is Database Connection Pooling mandatory, and why does opening 5,000 direct connections crash PostgreSQL?"
+* **Answer**:
+  * In PostgreSQL, **each connection spawns a separate OS process** (consuming ~10 MB of RAM, private caches, and kernel tracking).
+  * If 5,000 client HTTP requests open 5,000 raw DB connections, 5,000 processes compete for 16 CPU cores. The CPU spends 95% of its time thrashing in OS process context switching and lock contention on shared memory.
+  * A **Connection Pooler (e.g. PgBouncer / HikariCP)** maintains a small, fixed pool of 50 active connections, queuing incoming queries. Counter-intuitively, throughput is **$10\times$ higher with 50 pooled connections than with 5,000 unpooled connections**!
 
 ---
 

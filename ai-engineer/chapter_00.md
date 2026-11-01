@@ -425,6 +425,17 @@ for i in range(len(X)):
 
 ### FAANG Interview Scenarios & Traps:
 
+```mermaid
+flowchart TD
+    subgraph XORProblem["Linear Separability (The XOR Problem)"]
+        direction TB
+        AND_OR["AND / OR Gates: Can be separated with ONE straight line! (Single Perceptron works)"]
+        XOR["XOR Gate: (0,1) and (1,0) are TRUE, (0,0) and (1,1) are FALSE.<br/>IMPOSSIBLE to separate with a single straight line!"]
+        HiddenLayer["Solution: Hidden Layer bends the coordinate space (Non-linear Transformation)!"]
+        AND_OR --> XOR --> HiddenLayer
+    end
+```
+
 #### Scenario 1: "Why does changing the Temperature parameter in ChatGPT alter its creativity and randomness?"
 * **Answer**: Temperature $T$ scales the logits before Softmax: $P_i = \frac{e^{z_i / T}}{\sum e^{z_j / T}}$.
   * **Low Temperature ($T = 0.1$)**: Divides logits by $0.1$ (multiplies by 10). The difference between the highest logit and the second-highest logit becomes enormous. Softmax probability for the top token concentrates to $99.9\%$, making outputs deterministic and repetitive.
@@ -432,6 +443,52 @@ for i in range(len(X)):
 
 #### Scenario 2: "What is the mathematical proof that stacking 100 linear layers collapses into a single layer?"
 * **Answer**: A linear layer is $y = W_1 x$. The next layer is $z = W_2 y = W_2(W_1 x) = (W_2 W_1) x$. Because matrix multiplication is associative and closed, the product of two matrices $W_2 W_1$ is simply another single matrix $W_{combined}$. Stacking 100 linear layers without non-linear activation functions is mathematically identical to a single matrix multiplication!
+
+#### Scenario 3: "Why can't a single Perceptron solve the XOR Problem, and why is a Hidden Layer required?"
+* **Answer**: Minsky and Papert's famous 1969 proof:
+  * A single perceptron computes a single linear hyperplane: $w_1 x_1 + w_2 x_2 + b = 0$ (a straight line in 2D).
+  * In the XOR truth table, the points $(0, 1)$ and $(1, 0)$ are class 1, while $(0, 0)$ and $(1, 1)$ are class 0.
+  * It is geometrically impossible to draw a single straight line separating those points.
+  * A **Hidden Layer** projects the 2D input into a higher-dimensional space where the points become linearly separable.
+
+#### Scenario 4: "What is the difference between Dot Product, Cosine Similarity, and Euclidean Distance?"
+* **Answer**:
+  * **Dot Product ($A \cdot B = \sum A_i B_i$)**: Combines angle and vector length. Favors longer documents over shorter ones.
+  * **Cosine Similarity ($\frac{A \cdot B}{\|A\| \|B\|}$)**: Normalizes vectors to unit length; measures **only the angle** between vectors ($-1$ to $+1$). Ideal for text embeddings where document length shouldn't distort semantic topic.
+  * **Euclidean Distance ($L2 = \sqrt{\sum (A_i - B_i)^2}$)**: Measures physical distance between endpoints in geometric space. If vectors are unit-normalized ($\|A\| = \|B\| = 1$), Euclidean distance is monotonically related to Cosine Similarity: $L2^2 = 2 - 2 \cos(\theta)$.
+
+#### Scenario 5: "Why does the Numerically Stable Softmax trick not change the mathematical probabilities?"
+* **Answer**: We subtract the constant $c = \max(x)$ from each logit:
+  $$\frac{e^{x_i - c}}{\sum e^{x_j - c}} = \frac{e^{x_i} \cdot e^{-c}}{\sum (e^{x_j} \cdot e^{-c})} = \frac{e^{x_i} \cdot e^{-c}}{e^{-c} \cdot \sum e^{x_j}} = \frac{e^{x_i}}{\sum e^{x_j}}$$
+  The constant factor $e^{-c}$ factors out of the numerator and denominator and cancels out completely! The mathematical probabilities are 100% identical, but float values never exceed $e^0 = 1.0$, completely preventing GPU `NaN` overflows!
+
+#### Scenario 6: "What do the tensor dimensions `(Batch, Sequence, Hidden)` represent in LLMs?"
+* **Answer**:
+  * **Batch ($B$)**: How many independent user prompts are processed simultaneously on the GPU tensor cores (e.g. $B = 8$).
+  * **Sequence Length ($S$ or $N$)**: How many tokens are in each prompt (e.g. $S = 2048$).
+  * **Hidden Dimension ($D$ or $d_{model}$)**: The embedding vector size representing the meaning of each token (e.g. $D = 4096$ in Llama 3).
+  * Tensor shape `(8, 2048, 4096)` = $8 \times 2048 \times 4096 \times 2 \text{ bytes (FP16)} \approx 134 \text{ MB}$ of GPU memory per layer!
+
+#### Scenario 7: "What is the difference between Dense Embeddings and Sparse Embeddings (BM25)?"
+* **Answer**:
+  * **Sparse Embeddings (BM25 / SPLADE)**: Massive vocabulary-sized vectors (~100,000 dimensions) where 99.9% of entries are zero. Excels at exact keyword matching (SKUs, IDs, medical drug names).
+  * **Dense Embeddings (OpenAI / Cohere)**: Compact continuous vectors (768 to 3072 dimensions) where every entry is a non-zero float. Excels at fuzzy semantic concepts (*"feline"* matches *"cat"*).
+  * Modern production systems combine both using **Hybrid Search** + Cross-Encoder Reranking.
+
+#### Scenario 8: "Why does Leaky ReLU prevent the Dying ReLU problem?"
+* **Answer**:
+  * Standard ReLU: $\text{ReLU}(x) = 0$ for $x < 0$. The gradient is $0.0$, permanently killing weights if they drop negative.
+  * **Leaky ReLU**: $\text{LeakyReLU}(x) = 0.01x$ for $x < 0$. The gradient in the negative region is a small constant `0.01`, allowing small error signals to flow backward so dormant neurons can recover.
+
+#### Scenario 9: "Why is Matrix Transposition ($A^T$) mandatory during Attention calculation?"
+* **Answer**: The Query matrix $Q$ has shape $(N \times d_k)$ and Key matrix $K$ has shape $(N \times d_k)$.
+  * Matrix multiplication requires the inner dimensions to match: $(N \times d_k) \times (d_k \times N)$.
+  * Transposing $K$ to $K^T$ of shape $(d_k \times N)$ allows computing $Q \cdot K^T$, yielding the square **$(N \times N)$ Attention Score matrix**, representing the pairwise relevance of every token to every other token.
+
+#### Scenario 10: "What is Top-K Sampling vs. Top-P (Nucleus) Sampling?"
+* **Answer**:
+  * **Top-K**: Truncates the Softmax distribution to only the top $K$ most likely tokens (e.g. $K = 50$), zeroing out the rest. Flaw: If the top token has 95% probability, Top-50 still includes 49 low-probability hallucinations.
+  * **Top-P (Nucleus)**: Dynamically selects the smallest set of tokens whose cumulative probability exceeds threshold $P$ (e.g. $P = 0.90$). If one token has 95% probability, only 1 token is considered; if the distribution is flat, it dynamically expands to 50 tokens.
 
 ---
 

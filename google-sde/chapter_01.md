@@ -417,6 +417,16 @@ dig google.com +short
 
 ### FAANG Interview Scenarios & Traps:
 
+```mermaid
+flowchart TD
+    subgraph SyscallTransition["System Call Transition (User to Kernel Mode)"]
+        UserApp["User Space Application (Ring 3)<br/>Calls socket(), read(), open()"] --> Trap["Software Interrupt / Syscall Trap"]
+        Trap --> Kernel["Kernel Space (Ring 0)<br/>CPU switches privilege mode"]
+        Kernel --> Hardware["Executes hardware action (Disk/NIC)"]
+        Hardware --> Return["Switches back to Ring 3 with data"]
+    end
+```
+
 #### Scenario 1: "Your server has 100% CPU usage and is frozen. How do you diagnose it step-by-step?"
 1. I will SSH into the server and run `htop` to identify the specific Process ID (PID) consuming 100% CPU.
 2. If it is a multi-threaded app, I'll press `H` in htop to inspect which specific thread is stuck.
@@ -435,6 +445,37 @@ dig google.com +short
   * **CPU Utilization** measures the percentage of CPU clock cycles actively executing user or kernel instructions.
   * **Load Average** counts the number of processes that are **runnable (using or waiting for CPU)** PLUS processes waiting in **Uninterruptible Disk Sleep (`D` state)**.
   * If your disk is failing or saturated with slow I/O, CPU utilization can be **2%**, while the Load Average reaches **50.0** because 50 threads are blocked waiting for disk blocks!
+
+#### Scenario 5: "What happens under the hood when you run a program in Linux? (The `fork()` and `execve()` dance)"
+* **Answer**:
+  1. The shell executes the `fork()` system call: The kernel creates an exact clone of the parent process with a new PID. Thanks to **Copy-On-Write (CoW)**, it does not copy physical RAM; it shares memory pages read-only until either process writes.
+  2. The child process calls `execve()`: The kernel purges the cloned memory, loads the binary executable from disk, maps new code/data/heap/stack segments, and begins executing `main()`.
+
+#### Scenario 6: "What is a Context Switch, and why is a Thread switch cheaper than a Process switch?"
+* **Answer**: A context switch saves the CPU register state (Program Counter, Stack Pointer) of a running task and restores another.
+  * **Process Switch**: The CPU must change memory page tables by reloading the `CR3` register. This **invalidates the hardware TLB cache**, causing thousands of subsequent memory instructions to suffer slow TLB misses!
+  * **Thread Switch**: Threads share the exact same virtual address space and page tables. The `CR3` register does not change; the TLB remains valid, making thread switches orders of magnitude cheaper.
+
+#### Scenario 7: "What is the difference between User Space (Ring 3) and Kernel Space (Ring 0)?"
+* **Answer**: Hardware CPU protection rings enforce security boundaries.
+  * **User Space (Ring 3)**: Where user applications (Python, Node.js, databases) run. Restricted instructions (accessing raw hard drives, network cards, memory tables) are blocked by the CPU hardware.
+  * **Kernel Space (Ring 0)**: Unrestricted access to hardware and physical memory.
+  * To read a file or send a network packet, user programs must trigger a **System Call (`syscall`)** interrupt, asking the kernel to perform the action safely on their behalf.
+
+#### Scenario 8: "How does the Linux Out-Of-Memory (OOM) Killer select which process to kill?"
+* **Answer**: When physical RAM and swap are exhausted, the kernel cannot allocate pages. Rather than kernel panic, the **OOM Killer** assigns every process a penalty score (`/proc/<PID>/oom_score`) based on:
+  1. Percentage of physical RAM consumed.
+  2. Short-lived processes vs long-lived system daemons.
+  * The process with the highest score is sent `SIGKILL`. Engineers can protect critical databases by adjusting `/proc/<PID>/oom_score_adj` to `-1000` (immune to OOM killer).
+
+#### Scenario 9: "Why does `epoll` handle 100,000 connections (C10K Problem) while `select` fails?"
+* **Answer**:
+  * **`select()` / `poll()`**: Takes an array of 100,000 file descriptors. Every time data arrives, the OS must iterate $O(N)$ through all 100,000 descriptors to find which one has bytes ready.
+  * **`epoll()` (Linux)**: Uses an internal kernel **Red-Black Tree** to track sockets and a **Ready List (Linked List)** populated by hardware network interrupts. When bytes arrive, `epoll_wait()` returns in $O(1)$ time containing *only* the active sockets that are ready for reading!
+
+#### Scenario 10: "What happens when a pipe's reader terminates early while the writer is still writing? (The `SIGPIPE` signal)"
+* **Answer**: If you run `cat large.txt | head -n 5`:
+  `head` reads 5 lines and exits, closing the read end of the pipe. The kernel detects that `cat` is writing to a pipe with zero readers and sends `cat` a **`SIGPIPE` (Signal 13)**, which by default terminates the writer. If a backend web app ignores `SIGPIPE` when writing to a dropped client socket, the entire web server can unexpectedly crash!
 
 ---
 

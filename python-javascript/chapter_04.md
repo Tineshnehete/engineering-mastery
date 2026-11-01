@@ -240,6 +240,15 @@ A **Heisenbug** is a bug that **disappears as soon as you add a `print()` or `co
 
 ### FAANG Interview Scenarios & Traps:
 
+```mermaid
+flowchart TD
+    subgraph FlameGraphStructure["Flame Graph Interpretation"]
+        Width["Width = Total CPU Time spent in function (Wider = Hotspot!)"]
+        Height["Height = Call Stack Depth (Y-axis = Caller -> Callee)"]
+        TopEdge["Top Edge = Functions currently executing on CPU cores"]
+    end
+```
+
 #### Scenario 1: "How do you diagnose a production Python service consuming 100% CPU without restarting it or attaching a debugger?"
 * **Answer**: You cannot add `breakpoint()` or restart because the stuck state would be lost. Instead, use non-intrusive sampling profilers like **`py-spy`**:
   ```bash
@@ -255,6 +264,60 @@ A **Heisenbug** is a bug that **disappears as soon as you add a `print()` or `co
 * **Answer**:
   * **Logging**: Records discrete events at a specific point in time (*"User 42 failed to purchase ticket"*). Logs are unstructured or structured text files tied to a single process.
   * **Distributed Tracing**: Follows the end-to-end journey of a single user request across 20 different microservices, databases, and message queues. Uses a unique **Trace ID** and nested **Span IDs** to measure latency per service boundary.
+
+#### Scenario 3: "Why do Python tracebacks print bottom-to-top, while JavaScript prints top-to-bottom?"
+* **Answer**:
+  * **Python**: Prints in chronological call order. The outermost caller is at line 1, and the final inner function where the `ZeroDivisionError` occurred is printed at the **very bottom**. *Interview Tip*: Always look at the last line first in Python!
+  * **JavaScript (V8)**: Prints the error message and the immediate crashing line at the **very top**, followed by stack frames descending down to the root event handler.
+
+#### Scenario 4: "Why should you never write `except BaseException:` or bare `except:` in Python?"
+* **Answer**: In Python's exception hierarchy, `BaseException` is the parent of both standard `Exception` AND system signals:
+  * Catching `BaseException` catches **`KeyboardInterrupt` (`Ctrl+C`)** and **`SystemExit` (`sys.exit()`)**!
+  * If a Kubernetes orchestrator sends a shutdown command, or a developer presses `Ctrl+C`, the application catches the signal as an error and refuses to terminate! Always catch `except Exception:`.
+
+#### Scenario 5: "What is a Heisenbug, and how does adding logs alter race-condition behavior?"
+* **Answer**: A Heisenbug is an issue that disappears when attempting to observe it.
+  * Writing to disk or terminal via `console.log()` / `print()` is an expensive I/O operation taking **1 to 5 milliseconds**.
+  * In concurrent or asynchronous systems, adding a log introduces an artificial 5ms delay to Thread A. This allows Thread B to win the race condition and acquire the lock cleanly, making the bug vanish!
+  * *Fix*: Use deterministic concurrency tests, thread sanitizers (`TSan`), or non-blocking event tracing.
+
+#### Scenario 6: "How do you capture a Heap Snapshot in Node.js to find memory leaks?"
+* **Answer**:
+  1. Start Node with `--inspect` or load the built-in `v8` module:
+     ```javascript
+     const v8 = require('v8');
+     const fs = require('fs');
+     const snapshotStream = v8.getHeapSnapshot();
+     snapshotStream.pipe(fs.createWriteStream('heap-dump.heapsnapshot'));
+     ```
+  2. Open Chrome DevTools $\to$ Memory Tab $\to$ Load Snapshot.
+  3. Compare two snapshots taken 10 minutes apart using **"Objects allocated between Snapshot 1 and 2"** to pinpoint leaked object constructors and detached DOM trees.
+
+#### Scenario 7: "Why is Structured JSON Logging mandatory in high-scale production systems?"
+* **Answer**:
+  * Plain text logs (`print("User logged in: id=42")`) require slow, fragile regular expressions to parse in log aggregators (Elasticsearch / Datadog).
+  * Structured JSON (`{"level": "info", "event": "user_login", "user_id": 42, "latency_ms": 14}`) allows log engines to **index fields as native numbers and keywords**.
+  * Engineers can run sub-second analytical queries across billions of records: `SELECT avg(latency_ms) WHERE event = 'user_login' AND latency_ms > 500`.
+
+#### Scenario 8: "What happens when an async background task throws an unhandled error in Python?"
+* **Answer**:
+  * If you launch a task using `asyncio.create_task(background_sync())` without storing the task reference or awaiting it:
+  * When an error occurs, Python logs: `Task exception was never retrieved`.
+  * The error is **silently swallowed**! The task dies, background data sync stops, and the server continues running unaware!
+  * *Fix*: Always attach an error callback: `task.add_done_callback(handle_task_result)` or use `asyncio.TaskGroup()` (Python 3.11+).
+
+#### Scenario 9: "What is the difference between Sampling Profilers and Instrumentation Profilers?"
+* **Answer**:
+  * **Instrumentation Profilers (e.g. `cProfile`)**: Rewrites code or hooks function calls to count every single execution. High overhead (slows program down $3\times$ to $10\times$), distorting real-world timing.
+  * **Sampling Profilers (e.g. `py-spy`, `perf`)**: Interrupts the CPU 100 times per second, takes a quick snapshot of the active instruction pointer, and resumes. Negligible overhead (< 1%), completely safe to run in live production!
+
+#### Scenario 10: "What is a Linux Core Dump, and how does `gdb` inspect crashes?"
+* **Answer**: When a process crashes from a segmentation fault (`SIGSEGV`) or abort (`SIGABRT`), the Linux kernel writes the entire physical memory space of the dying process to a file named `core.<PID>`.
+  * Engineers load the crash state into `gdb`:
+    ```bash
+    gdb /usr/bin/python core.4120
+    (gdb) bt # Prints the exact C backtrace and memory registers at the crash moment!
+    ```
 
 ---
 

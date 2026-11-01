@@ -227,6 +227,14 @@ In `package.json`, versions follow `MAJOR.MINOR.PATCH` (e.g., `4.18.2`):
 
 ### FAANG Interview Scenarios & Traps:
 
+```mermaid
+flowchart LR
+    subgraph ModuleSystems["Module System Architectures"]
+        CJS["CommonJS (require)<br/>- Synchronous execution<br/>- Evaluated at runtime<br/>- Dynamic requires allowed"]
+        ESM["ES Modules (import)<br/>- Asynchronous parsing<br/>- Static analysis before execution<br/>- Enables Tree-Shaking (dead code elimination)"]
+    end
+```
+
 #### Scenario 1: "What is the difference between `npm install` and `npm ci`?"
 * **Answer**:
   * `npm install`: Resolves dependencies according to `package.json` version ranges (`^`, `~`). Can install newer compatible versions and updates `package-lock.json`.
@@ -237,6 +245,46 @@ In `package.json`, versions follow `MAJOR.MINOR.PATCH` (e.g., `4.18.2`):
 
 #### Scenario 3: "Why do `.pyc` files speed up script startup but NOT script execution speed?"
 * **Answer**: A `.pyc` file stores compiled **Python Bytecode** (the output of lexical analysis, parsing, and AST compilation). Loading a `.pyc` skips the parsing and compilation phase on startup. However, once loaded into RAM, the Python Virtual Machine (PVM) loop executes the bytecode at the exact same speed regardless of whether it was parsed from source or loaded from `.pyc`.
+
+#### Scenario 4: "What does `source .venv/bin/activate` physically do to your shell session?"
+* **Answer**: It performs one simple environment variable change: it **prepends the virtualenv's `bin/` directory to your shell's `$PATH` variable**!
+  $$\text{PATH} = \text{"/home/user/project/.venv/bin:"} + \text{OLD\_PATH}$$
+  When you type `python` or `pip`, the OS looks through `$PATH` from left to right, finding the virtual environment's Python binary first before reaching `/usr/bin/python`. Running `deactivate` simply restores the original `$PATH`.
+
+#### Scenario 5: "What is the difference between `dependencies`, `devDependencies`, and `peerDependencies`?"
+* **Answer**:
+  * **`dependencies`**: Required for the application to run in production (e.g. `express`, `pg`). Installed in both dev and production Docker builds.
+  * **`devDependencies`**: Required only during local development and testing (e.g. `typescript`, `jest`, `eslint`). Excluded in production deployments (`npm install --production`).
+  * **`peerDependencies`**: Used by plugin packages (e.g. `react-router` requiring `react`). It tells the consuming application: *"I require React version ^18.0.0, but I expect YOU to install it at the root level."*
+
+#### Scenario 6: "What is a Dependency Confusion attack on private npm/PyPI registries?"
+* **Answer**: If a company uses an internal package named `@company/payment-service` hosted on a private Artifactory repository:
+  * An attacker registers a public package with the **exact same name on the public npmjs.com registry** with a higher version number (`99.0.0`).
+  * If the build server's package manager is misconfigured without scoped registry routing, it checks public npm first, finds version 99.0.0, and downloads the attacker's malicious code into the production build!
+  * *Fix*: Always use scoped packages (`@myorg/pkg`) and explicitly configure `.npmrc` to route scopes exclusively to private registry URLs.
+
+#### Scenario 7: "What is the difference between CommonJS (CJS) and ES Modules (ESM)?"
+* **Answer**:
+  * **CommonJS (`require` / `module.exports`)**: Loaded **synchronously at runtime**. You can put `require()` inside an `if` block. Modules cannot be analyzed before execution, making tree-shaking impossible.
+  * **ES Modules (`import` / `export`)**: Parsed **asynchronously and statically** at compile time before any code executes. Imports must reside at top-level. This static structure enables bundlers (Webpack, Vite, Rollup) to perform **Tree-Shaking**—stripping away thousands of unused functions from the final production bundle.
+
+#### Scenario 8: "What does `npx` do, and why is it preferred over installing CLI tools globally?"
+* **Answer**: `npx` (Node Package eXecute) executes binary CLI tools without polluting your global computer environment:
+  1. It checks if the binary exists in the local project's `node_modules/.bin`.
+  2. If not found, it downloads the package to a temporary cache, executes the command, and purges it from disk.
+  * *Benefit*: Ensures all developers run the exact same version of tools (e.g. `npx prisma migrate`) rather than drifting based on global version differences.
+
+#### Scenario 9: "Explain Semantic Versioning (SemVer): `^1.2.3` vs `~1.2.3` vs `1.2.3`."
+* **Answer**: Follows `MAJOR.MINOR.PATCH`:
+  * **`1.2.3` (Exact)**: Installs only version 1.2.3. Zero updates permitted.
+  * **`~1.2.3` (Tilde)**: Permits only backward-compatible **bug fixes (PATCH)**: `>= 1.2.3 < 1.3.0`.
+  * **`^1.2.3` (Caret - Default)**: Permits backward-compatible **features and bug fixes (MINOR & PATCH)**: `>= 1.2.3 < 2.0.0`. Breaking changes (`MAJOR` bump to 2.0.0) are blocked.
+
+#### Scenario 10: "Why should you never commit `.env` into a Docker image, and how do Multi-Stage builds protect secrets?"
+* **Answer**:
+  * In Docker, **every `RUN` and `COPY` command creates an immutable layer in the image**.
+  * Even if you add `RUN rm .env` in a subsequent line, the secret remains extractable in the earlier layer history (`docker history`)!
+  * **Multi-Stage Builds**: Compile code in a temporary "builder" stage using temporary secrets (`--mount=type=secret`), and `COPY` *only* the compiled static artifacts into a minimal, clean production scratch image.
 
 ---
 

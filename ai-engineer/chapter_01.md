@@ -206,6 +206,15 @@ console.log(`Optimal x = ${x.toFixed(4)}, Minimum y = ${y.toFixed(4)}`);
 
 ### FAANG Interview Scenarios & Traps:
 
+```mermaid
+flowchart LR
+    subgraph LRScheduler["Warmup + Cosine Decay Schedule"]
+        direction LR
+        S1["Step 0: LR = 0"] -->|"Warmup (Linear Ramp)"| S2["Step 2,000: Peak LR (3e-4)"]
+        S2 -->|"Cosine Annealing (Smooth Decay)"| S3["Step 100,000: Min LR (3e-5)"]
+    end
+```
+
 #### Scenario 1: "Why does Cross-Entropy Loss use $-\log(p)$ instead of Mean Squared Error (MSE) for LLM token classification?"
 * **Answer**:
   1. **Vanishing Gradients in MSE**: When MSE is combined with Softmax, if the model predicts probability $p = 0.001$ for the correct class, the derivative of Softmax in the saturation zone is nearly 0. The model learns at a snail's pace even though its mistake is massive!
@@ -215,6 +224,55 @@ console.log(`Optimal x = ${x.toFixed(4)}, Minimum y = ${y.toFixed(4)}`);
 * **Answer**: L2 regularization adds $\frac{1}{2}\lambda \sum w^2$ to the loss function. The gradient update becomes $w \leftarrow w(1 - \alpha \lambda) - \alpha \nabla L$.
   * By penalizing large weights, it forces the network to find solutions where **weights remain small and evenly distributed**.
   * Small weights ensure the model's decision boundaries are smooth curves rather than sharp, jagged oscillations that memorize individual data points.
+
+#### Scenario 3: "What is Gradient Clipping, and why is it mandatory during Transformer training?"
+* **Answer**: During training, occasionally a batch contains unusual tokens or corrupted sequences that produce a gigantic gradient vector ($\|\mathbf{g}\| = 5000$). Taking a gradient descent step with this vector will blow up model parameters, permanently ruining days of training.
+  * **Gradient Clipping by Norm**: If $\|\mathbf{g}\| > \text{max\_norm}$ (e.g. 1.0):
+    $$\mathbf{g} \leftarrow \mathbf{g} \times \frac{\text{max\_norm}}{\|\mathbf{g}\|}$$
+  * It preserves the **exact direction** of the gradient while scaling its magnitude down to safe bounds!
+
+#### Scenario 4: "Why does the Adam optimizer combine Momentum and RMSprop?"
+* **Answer**:
+  * **Momentum (First Moment $m_t$)**: Calculates an exponentially decaying average of past gradients. Keeps moving in the persistent downhill direction, rolling through flat saddle points and noise.
+  * **RMSprop (Second Moment $v_t$)**: Calculates an exponentially decaying average of past *squared* gradients ($\nabla L^2$). It divides the update step by $\sqrt{v_t}$:
+    * Frequent/steep gradients $\to$ Large $v_t$ $\to$ Step size is reduced (prevents oscillation).
+    * Rare/gentle gradients $\to$ Tiny $v_t$ $\to$ Step size is boosted!
+
+#### Scenario 5: "What is the difference between Adam and AdamW (Loshchilov & Hutter 2017)?"
+* **Answer**:
+  * In standard Adam, L2 regularization is added directly to the gradient before calculating moments. Because the L2 gradient is divided by $\sqrt{v_t}$, weights with large historical gradients receive *less* decay penalty than weights with small gradients!
+  * **AdamW (Decoupled Weight Decay)**: Decouples weight decay from gradient moment updates. It subtracts $\lambda w$ directly from the parameter update after Adam's adaptive step is computed. Every modern LLM (Llama, GPT) trains with AdamW!
+
+#### Scenario 6: "Why do modern LLMs use a Warmup + Cosine Decay scheduler?"
+* **Answer**:
+  * **Warmup**: At step 0, Adam's second moment estimates ($v_t$) are uncalibrated (starting from 0). Without warmup, initial updates take wild, destructive steps. Ramping up over 2,000 steps stabilizes Adam's variance estimators.
+  * **Cosine Decay**: As training nears completion, smaller steps allow the optimizer to settle into the deepest, narrowest local minima without bouncing out, squeezing out maximum test accuracy.
+
+#### Scenario 7: "What is the Bias-Variance Tradeoff in Machine Learning?"
+* **Answer**:
+  * **High Bias (Underfitting)**: Model is too simple (e.g. linear model on complex curve). Fails on both training and test data.
+  * **High Variance (Overfitting)**: Model has too much capacity (100M parameters for 1,000 samples). Memorizes training noise perfectly (0% error), but crashes on unseen test data.
+  * The sweet spot minimizes total expected error: $\text{Total Error} = \text{Bias}^2 + \text{Variance} + \text{Irreducible Noise}$.
+
+#### Scenario 8: "How does Dropout work, and why must activations be scaled by $\frac{1}{1-p}$ (Inverted Dropout)?"
+* **Answer**:
+  * During training, each neuron is independently zeroed out with probability $p$ (e.g. $p = 0.2$).
+  * If you zero out 20% of neurons, the expected sum of activations entering the next layer drops by 20%.
+  * **Inverted Dropout**: During training, surviving activations are scaled by $\frac{1}{1 - p}$ (multiplied by $\frac{1}{0.8} = 1.25$).
+  * *Benefit*: At inference time (evaluation), **Dropout is turned OFF completely**. Because activations were pre-scaled during training, evaluation runs at full speed with zero math adjustments needed!
+
+#### Scenario 9: "What is Mini-Batch Gradient Descent vs. Full-Batch vs. Stochastic (SGD)?"
+* **Answer**:
+  * **Full-Batch**: Computes loss across all 10,000,000 dataset samples before updating weights once. Mathematically exact gradient, but impossible to fit in GPU VRAM and extremely slow.
+  * **Stochastic (1-sample)**: Updates weights after each single sample. Extremely noisy; bounces wildly without taking advantage of GPU tensor core matrix parallelism.
+  * **Mini-Batch (Standard)**: Computes loss over batches of 32 to 2048 samples. Maximizes GPU parallel throughput while introducing beneficial gradient noise that helps escape local minima!
+
+#### Scenario 10: "What is Mixed Precision Training (FP16 vs. BF16), and why does FP16 require Loss Scaling?"
+* **Answer**:
+  * **FP32** (4 bytes per parameter) is slow and memory-heavy.
+  * **FP16** has a tiny dynamic range (minimum positive normal float is $\approx 6 \times 10^{-5}$). Gradients smaller than this underflow to zero!
+  * **Loss Scaling (FP16)**: Multiplies loss by $1024$ before backpropagation, shifting small gradients into FP16's representable range, then un-scales them before weight update.
+  * **BF16 (Bfloat16)**: Used in modern GPUs (A100/H100). Sacrifices mantissa precision to keep the same 8-bit exponent as FP32. It matches FP32's dynamic range, eliminating the need for loss scaling entirely!
 
 ---
 

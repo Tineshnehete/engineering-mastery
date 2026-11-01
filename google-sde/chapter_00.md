@@ -382,8 +382,19 @@ for row in range(rows):
 
 ## 7. FAANG Interview Scenarios & Traps (Ground Zero)
 
+```mermaid
+flowchart TD
+    subgraph MemoryTranslation["Hardware Address Translation"]
+        VirtualAddr["Virtual Address (Used by Your Code)"] --> MMU["Memory Management Unit (MMU)"]
+        MMU --> TLB{"Check TLB Cache"}
+        TLB -->|"TLB Hit (0.5 ns)"| PhysicalRAM["Physical RAM Address"]
+        TLB -->|"TLB Miss (Walk Page Tables 10-50 ns)"| PageTable["OS Page Table in RAM"]
+        PageTable --> PhysicalRAM
+    end
+```
+
 ### Scenario 1: "Can a Memory Leak happen in a language with an automatic Garbage Collector like Python or JavaScript?"
-* **Answer**: **YES!** A garbage collector only frees objects that have **zero reachable references** from the root scope. If an object is accidentally retained in a global array, a singleton cache without an eviction policy (e.g. unbounded dict), or a forgotten event listener (`window.addEventListener`), the GC considers it "in use" forever. Memory will steadily climb until the process crashes with `OOM (Out Of Memory)`.
+* **Answer**: **YES!** A garbage collector only frees objects that have **zero reachable references** from the root scope (global object, active call stack). If an object is accidentally retained in a global array, a singleton cache without an eviction policy (e.g. unbounded dictionary), or a forgotten event listener (`window.addEventListener`), the GC considers it "in use" forever. Memory will steadily climb until the process crashes with `OOM (Out Of Memory)`.
 
 ### Scenario 2: "Why is allocating memory on the Stack orders of magnitude faster than the Heap?"
 * **Answer**: 
@@ -392,6 +403,40 @@ for row in range(rows):
 
 ### Scenario 3: "Why does array lookup `arr[i]` take O(1) time while linked list lookup takes O(N)?"
 * **Answer**: An array is a **contiguous block of memory**. The CPU calculates the exact memory address in a single multiplication step: $\text{Address} = \text{Base} + (i \times \text{Element Size})$. In contrast, linked list nodes are scattered across random Heap memory locations; to find the $i$-th element, the CPU must physically follow $i$ pointers sequentially, jumping through random RAM addresses.
+
+### Scenario 4: "Why does a 32-bit operating system have a hard limit of 4 GB of RAM?"
+* **Answer**: A 32-bit pointer can only represent $2^{32}$ unique binary numbers.
+  $$2^{32} = 4,294,967,296 \text{ distinct byte addresses} = 4 \text{ Gigabytes (GB)}$$
+  Even if your motherboard physically has 32 GB of RAM installed, a 32-bit CPU cannot generate a binary number larger than `0xFFFFFFFF` to address byte number 4,294,967,297! In contrast, 64-bit systems ($2^{64}$) can address 16 Exabytes of RAM ($16 \text{ billion GB}$).
+
+### Scenario 5: "What is Virtual Memory, and how does the MMU translate addresses?"
+* **Answer**: 
+  * Your application code **never sees real physical RAM chips**. The OS provides every process with a clean, isolated **Virtual Address Space** starting from address `0x00000000`.
+  * The hardware **MMU (Memory Management Unit)** on the CPU translates virtual addresses to physical RAM using **Page Tables** (split into 4 KB chunks called pages).
+  * To avoid looking up page tables in slow RAM on every instruction, the CPU caches recent translations in an ultra-fast hardware cache called the **TLB (Translation Lookaside Buffer)**.
+
+### Scenario 6: "What is the difference between Temporal Locality and Spatial Locality in CPU Caches?"
+* **Answer**:
+  * **Temporal Locality**: If a memory location was accessed once, it is likely to be accessed again soon (e.g., a loop counter variable `i`). The CPU keeps it in L1 cache.
+  * **Spatial Locality**: If a memory location was accessed, nearby memory locations are likely to be accessed soon (e.g., iterating through an array `arr[0], arr[1]`). The CPU never loads a single byte; it loads a **64-byte Cache Line** containing the surrounding data.
+
+### Scenario 7: "What causes a Stack Overflow vs. an Out of Memory (OOM) Heap Error?"
+* **Answer**:
+  * **Stack Overflow**: Occurs when function call nesting becomes too deep (e.g. infinite recursion). The call stack exceeds its fixed OS boundary (typically 8 MB on Linux, 1 MB on Windows), triggering an immediate segmentation fault (`SIGSEGV`).
+  * **Heap OOM**: Occurs when dynamic allocations (`malloc`, large objects, caches) consume all available physical RAM plus swap disk space. The Linux kernel's `oom-killer` intervenes to terminate the process.
+
+### Scenario 8: "What is Memory Alignment and why does Struct Padding exist in C/C++?"
+* **Answer**: Modern 64-bit CPUs read memory in **8-byte word boundaries**. If an 8-byte integer is stored across two boundaries (e.g. starting at odd address `0x03`), the CPU must execute two separate memory reads, shift registers, and combine bytes. Compilers insert invisible "padding bytes" between struct fields so every variable aligns with its natural word boundary, trading a few wasted bytes for massive CPU speedups.
+
+### Scenario 9: "Why is Idempotency essential in distributed payment APIs, and how is it implemented?"
+* **Answer**: On the internet, network packets drop frequently. If a user clicks "Pay $100" and the server processes the payment but the Wi-Fi drops before sending the response, the client will retry the request.
+  * Without idempotency: The user is billed twice ($200)!
+  * **With Idempotency Key**: The client generates a unique UUID (`Idempotency-Key: f47ac10b...`) and sends it in the HTTP header. The server stores the key in Redis with a 24-hour TTL. If the same key arrives again, the server skips payment processing and returns the cached confirmation response immediately.
+
+### Scenario 10: "What happens at the hardware level during a Branch Misprediction?"
+* **Answer**: High-performance CPUs use **Pipelining**—they fetch and decode the next 15 instructions while the current instruction is executing. When encountering an `if/else` condition whose result isn't calculated yet, the CPU **guesses (Branch Predictor)** which path will be taken and speculatively executes it.
+  * If the guess is correct: Zero lost time!
+  * If the guess is wrong (**Misprediction**): The CPU must flush the entire 15-stage pipeline, discard speculative results, and reload instructions from the correct branch, costing 15–20 wasted clock cycles per mistake.
 
 ---
 

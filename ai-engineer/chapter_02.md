@@ -249,6 +249,17 @@ X.forEach((input, idx) => {
 
 ### FAANG Interview Scenarios & Traps:
 
+```mermaid
+flowchart LR
+    subgraph ResidualMath["Residual Gradient Highway"]
+        X["Input x"] --> Add["Add (+)"]
+        X -->|"SubLayer F(x)"| SubLayer["Attention / MLP"]
+        SubLayer --> Add
+        Add --> Output["Output = x + F(x)"]
+        Output -.->|"Gradient Backprop: 1 + F'(x)"| Highway["Gradients flow directly through '1' without vanishing!"]
+    end
+```
+
 #### Scenario 1: "Why do modern LLMs like Llama 3 use RMSNorm instead of standard LayerNorm?"
 * **Answer**:
   * Standard LayerNorm computes both **mean** and **variance**: $\text{LN}(x) = \frac{x - \mu}{\sqrt{\sigma^2 + \epsilon}} \cdot \gamma + \beta$.
@@ -262,6 +273,52 @@ X.forEach((input, idx) => {
   * However, **ReLU zeroes out roughly half of all activations** (all negative values)!
   * This cuts the signal variance in half at every layer ($0.5 \times \text{Var}$).
   * To compensate for losing 50% of the signal energy, Kaiming He multiplied the variance by **$2$**: $\text{Var}(W) = \frac{2}{d_{in}}$, meaning standard deviation is $\sigma = \sqrt{\frac{2}{d_{in}}}$.
+
+#### Scenario 3: "Why do Residual Connections ($x + F(x)$) eliminate the Vanishing Gradient problem?"
+* **Answer**: Look at the derivative of the residual connection with respect to input $x$:
+  $$\frac{\partial}{\partial x} [x + F(x)] = 1 + \frac{\partial F(x)}{\partial x}$$
+  Even if the sublayer's gradient $\frac{\partial F(x)}{\partial x}$ vanishes to **$0.0$**, the gradient expression **always retains the constant $+1$**! Error signals can travel backward across 100 layers uninterrupted through the uninterrupted identity highway.
+
+#### Scenario 4: "What is Pre-LayerNorm vs. Post-LayerNorm in Transformer blocks?"
+* **Answer**:
+  * **Post-LayerNorm (Original 2017 Transformer)**: $\text{Output} = \text{LayerNorm}(x + F(x))$. Gradients at the output layer pass through LayerNorm derivatives that scale with depth, causing training instability without strict learning rate warmup.
+  * **Pre-LayerNorm (Modern LLMs: GPT-3, Llama)**: $\text{Output} = x + F(\text{LayerNorm}(x))$. The residual connection remains completely un-normalized, allowing clean gradient propagation. Stabilizes training and allows scaling to hundreds of layers!
+
+#### Scenario 5: "How does the Matrix Chain Rule derive the weight gradient formula $\nabla W = X^T \cdot dZ$?"
+* **Answer**:
+  * Forward pass: $Z = X \cdot W$, where $X \in \mathbb{R}^{B \times d_{in}}$ and $W \in \mathbb{R}^{d_{in} \times d_{out}}$, producing $Z \in \mathbb{R}^{B \times d_{out}}$.
+  * By backprop, we are given the upstream gradient $dZ = \frac{\partial L}{\partial Z} \in \mathbb{R}^{B \times d_{out}}$.
+  * We need the weight gradient $\frac{\partial L}{\partial W}$ to have the exact same shape as $W$ ($(d_{in} \times d_{out})$).
+  * Transposing $X$ to $X^T \in \mathbb{R}^{d_{in} \times B}$ and multiplying by $dZ \in \mathbb{R}^{B \times d_{out}}$ produces $(d_{in} \times d_{out})$! Every element $(i, j)$ computes the sum across all batch samples of input feature $i$ multiplied by error $j$.
+
+#### Scenario 6: "Why does GELU (Gaussian Error Linear Unit) outperform ReLU in modern Large Language Models?"
+* **Answer**:
+  * ReLU hard-clips: $\max(0, x)$. It has a discontinuous slope at 0, and hard-zeros negative inputs.
+  * **GELU**: $\text{GELU}(x) = x \cdot \Phi(x) = x \cdot P(X \le x)$ where $X \sim \mathcal{N}(0, 1)$.
+  * Neurons are scaled by the probability that they are larger than random Gaussian noise. Inputs that are slightly negative have a small non-zero slope, maintaining gentle gradients that allow dormant neurons to re-activate.
+
+#### Scenario 7: "What is SwiGLU, and why did Llama 3 replace standard MLPs with SwiGLU?"
+* **Answer**:
+  * Standard MLP: $\text{Output} = \text{ReLU}(X W_1) W_2$.
+  * **SwiGLU (Swish Gated Linear Unit)**: Uses two parallel linear projections: a "gate" and a "value":
+    $$\text{SwiGLU}(x) = (\text{Swish}(x W_{gate}) \odot (x W_{up})) W_{down}$$
+  * The element-wise product ($\odot$) acts as a soft multiplicative filter. It empirically boosts reasoning and coding benchmark performance, and is adopted by Llama 3, Mistral, and PaLM 2.
+
+#### Scenario 8: "Why does Xavier Initialization fail on Deep ReLU Networks?"
+* **Answer**: Xavier assumes activation functions are linear or symmetric around zero (like Sigmoid or Tanh). Because ReLU drops 50% of the distribution, signal variance is cut in half at every layer. In a 30-layer network, output variance shrinks by $0.5^{30} \approx 9.3 \times 10^{-10}$, starving downstream layers of numeric signal.
+
+#### Scenario 9: "Why does the Backward Pass require $2\times$ the FLOPs of the Forward Pass?"
+* **Answer**:
+  * Forward pass: Computes 1 matrix multiplication ($Z = X \cdot W$).
+  * Backward pass: Must compute **TWO matrix multiplications**:
+    1. Gradient with respect to weights: $dW = X^T \cdot dZ$.
+    2. Gradient with respect to inputs (to pass to earlier layer): $dX = dZ \cdot W^T$.
+  * Therefore, total compute for training is roughly $3\times$ FLOPs (1 Forward + 2 Backward)!
+
+#### Scenario 10: "What happens during Layer Freezing (Transfer Learning)?"
+* **Answer**: When you set `layer.requires_grad = False` on the first 20 layers of a pre-trained model:
+  * PyTorch skips computing $\nabla W$ for those layers during backpropagation.
+  * Forward pass still runs, but backward pass terminates early, saving GPU VRAM (no need to store intermediate activations for frozen layers) and speeding up training by 50%!
 
 ---
 

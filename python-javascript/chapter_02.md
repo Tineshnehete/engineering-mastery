@@ -242,6 +242,16 @@ readStream.pipe(writeStream);
 
 ### FAANG Interview Scenarios & Traps:
 
+```mermaid
+flowchart LR
+    subgraph StreamBackpressure["Node.js Stream Backpressure Flow"]
+        Producer["Fast Reader (SSD 500 MB/s)"] -->|"Writes chunks"| Buffer["Internal Memory Buffer (highWaterMark = 16 KB)"]
+        Buffer -->|"Consumer pulls slowly"| Consumer["Slow Consumer (Mobile 1 MB/s)"]
+        Buffer -.->|"Buffer Full: returns write() == false"| Pause["Reader PAUSES!"]
+        Consumer -.->|"Emits 'drain' event"| Resume["Reader RESUMES!"]
+    end
+```
+
 #### Scenario 1: "What is the difference between `path.join('/a', '/b')` and `path.resolve('/a', '/b')` in Node.js?"
 * **Answer**:
   * `path.join('/a', '/b')`: Simply concatenates path segments using the platform separator, returning `'/a/b'`.
@@ -252,6 +262,63 @@ readStream.pipe(writeStream);
   * If you ignore `writeStream.write(chunk) === false`, the unwritten chunks accumulate in the internal Node.js memory buffer.
   * In minutes, buffer consumption explodes to gigabytes of RAM, causing process OOM crashes!
   * Using `.pipe()` or `stream.pipeline()` automatically monitors backpressure, pausing the reader when the buffer fills and resuming when the `'drain'` event fires.
+
+#### Scenario 3: "What is a Path Traversal Attack, and how do you protect file download endpoints?"
+* **Answer**: If an endpoint accepts a user filename: `GET /download?file=report.pdf`:
+  * An attacker supplies: `file=../../../../etc/passwd` or `file=../../.env`.
+  * Naive `open(f"/var/www/uploads/{filename}")` traverses up to the root directory and leaks server secrets!
+  * **Fix**: Validate that the resolved absolute path starts strictly with the base directory:
+    ```javascript
+    const safePath = path.resolve(BASE_DIR, userFilename);
+    if (!safePath.startsWith(BASE_DIR)) {
+        throw new Error("Access Denied: Path Traversal Detected");
+    }
+    ```
+
+#### Scenario 4: "What is the CWD Trap, and why does `open('config.json')` fail in systemd/cron?"
+* **Answer**: Relative paths are resolved against the **Current Working Directory (`os.getcwd()`)**, which is the directory where the terminal command was executed, NOT where the script file lives!
+  * If cron executes `/usr/bin/python /var/app/cron.py` from `/root/`, `open('config.json')` looks in `/root/config.json` and crashes!
+  * **Fix**: Always anchor relative paths to the file's own location:
+    * Python: `Path(__file__).resolve().parent / "config.json"`
+    * Node.js: `path.join(__dirname, 'config.json')`
+
+#### Scenario 5: "How does Python's `with` statement implement Context Managers under the hood?"
+* **Answer**: It invokes the **Context Manager Protocol**:
+  1. Calls `obj.__enter__()` before entering the block (acquires file handle, socket, or DB lock).
+  2. Executes code inside the block.
+  3. Calls `obj.__exit__(exc_type, exc_val, exc_tb)` when leaving the block, **even if an unhandled exception or crash occurred**!
+  4. Guarantees file descriptors and locks are 100% safely closed without manual `finally` boilerplate.
+
+#### Scenario 6: "What is the difference between Buffered I/O and Direct/Unbuffered I/O?"
+* **Answer**:
+  * **Unbuffered I/O**: Every single `write("a")` call triggers an expensive kernel system call (`write()`), crossing the CPU protection ring boundary. Writing 10,000 bytes one-by-one requires 10,000 syscalls, taking 50 milliseconds!
+  * **Buffered I/O (Default)**: The runtime collects bytes into an in-memory 8 KB buffer in user space. It only triggers a kernel syscall when the buffer fills or when `.flush()` is called, doing the work in a single $0.05$ ms operation ($1000\times$ faster).
+
+#### Scenario 7: "What is a UTF-8 BOM (`\ufeff`), and why does CSV parsing fail with `KeyError: '\ufeffid'`?"
+* **Answer**: Microsoft Excel prepends a 3-byte invisible **Byte Order Mark** (`EF BB BF`) to CSV files to identify them as UTF-8.
+  * Standard UTF-8 readers treat those 3 bytes as text character `\ufeff`.
+  * The first column header `"id"` becomes `"\ufeffid"`, causing `row["id"]` to throw a `KeyError`!
+  * **Fix**: In Python, open with `encoding="utf-8-sig"` (which automatically detects and strips the BOM). In Node.js, strip `\ufeff` using regex.
+
+#### Scenario 8: "Why does `fs.readFileSync()` freeze an entire production Node.js cluster?"
+* **Answer**: Node.js executes JavaScript on a **single main thread**. When `fs.readFileSync()` runs, the thread is blocked waiting for disk hardware (which can take 50–500ms on loaded cloud disks). During those 500ms, the event loop cannot process incoming network packets, health checks, or timeouts. All other 2,000 concurrent user requests stall!
+
+#### Scenario 9: "What is the difference between a Hard Link and a Soft Link (Symlink)?"
+* **Answer**:
+  * **Hard Link**: Points directly to the **underlying physical inode** on the filesystem. Deleting the original filename does NOT delete the file data; data persists until all hard link references are deleted. Cannot cross filesystem partitions.
+  * **Soft Link (Symlink)**: A small special file that contains only a text path string pointing to another filename. If the target file is deleted, the symlink breaks ("dangling link"). Can cross partitions and network drives.
+
+#### Scenario 10: "How do you safely create temporary files without leaking disk storage?"
+* **Answer**:
+  * In Python: Use `tempfile.NamedTemporaryFile()` as a context manager:
+    ```python
+    import tempfile
+    with tempfile.NamedTemporaryFile(delete=True) as tmp:
+        tmp.write(b"sensitive intermediate data")
+        tmp.flush()
+        # File is automatically unlinked from disk upon exiting with block!
+    ```
+  * In Node.js: Use `fs.mkdtemp(path.join(os.tmpdir(), 'prefix-'))` and register cleanup hooks on `process.on('exit')`.
 
 ---
 

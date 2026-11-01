@@ -400,6 +400,16 @@ flowchart TD
 
 ### FAANG Interview Scenarios & Traps:
 
+```mermaid
+flowchart TD
+    subgraph ServingPhases["LLM Inference Execution Bottlenecks"]
+        direction TB
+        Prefill["1. Prefill Phase (Prompt Processing)<br/>- All prompt tokens processed in parallel<br/>- Matrix-Matrix Multiplications (GEMM)<br/>- ⚡ COMPUTE-BOUND (Tensor Cores run at 100%)"]
+        Decode["2. Decode Phase (Token-by-Token Generation)<br/>- Generates 1 token per forward pass<br/>- Matrix-Vector Multiplications (GEMV)<br/>- 🐢 MEMORY-BANDWIDTH-BOUND (Streaming weights from HBM to SRAM)"]
+        Prefill --> Decode
+    end
+```
+
 #### Scenario 1: "Why does FlashAttention calculate exact mathematically identical attention, yet runs 3x faster?"
 * **Answer**:
   * FlashAttention makes **zero approximations**; its mathematical output is identical to standard attention down to the float bit.
@@ -409,6 +419,67 @@ flowchart TD
 
 #### Scenario 2: "What happens if you remove the Causal Mask during autoregressive generation?"
 * **Answer**: If you remove the causal mask during generation, token $t$ is allowed to attend to future positions $t+1, t+2, \dots$. During generation, those future tokens haven't been generated yet (or contain uninitialized garbage tokens in the buffer). The attention weights for the valid current token become diluted by random noise, completely breaking grammatical coherence.
+
+#### Scenario 3: "Prove mathematically why the Dot Product of two random vectors has variance equal to $d_k$."
+* **Answer**:
+  * Let $q = [q_1, \dots, q_d]$ and $k = [k_1, \dots, k_d]$ be independent random variables with mean $\mathbb{E}[q_i] = 0$ and unit variance $\text{Var}(q_i) = 1$.
+  * The dot product is $S = \sum_{i=1}^d q_i k_i$.
+  * The variance of the product of two independent zero-mean variables is: $\text{Var}(q_i k_i) = \text{Var}(q_i) \text{Var}(k_i) = 1 \times 1 = 1$.
+  * The variance of the sum of $d_k$ independent variables is:
+    $$\text{Var}(S) = \sum_{i=1}^{d_k} \text{Var}(q_i k_i) = d_k \times 1 = d_k$$
+  * Standard deviation is $\sigma = \sqrt{d_k}$. Dividing by $\sqrt{d_k}$ scales variance back to $1.0$, preventing Softmax logits from saturating into flat zero-gradient zones!
+
+#### Scenario 4: "What is the difference between the Prefill Phase and the Decode Phase in LLM serving?"
+* **Answer**:
+  * **Prefill Phase (Prompt Ingestion)**: Processes the entire user prompt (e.g. 2,000 tokens) in a single parallel pass. Computes General Matrix-Matrix multiplications (GEMM). Saturates GPU tensor cores and is **Compute-Bound**!
+  * **Decode Phase (Autoregressive Generation)**: Generates text token-by-token. For each new token, the model must read all 70B parameter weights from VRAM to compute a single Matrix-Vector multiplication (GEMV). The tensor cores spend 95% of their time waiting for data to travel across the memory bus. It is strictly **Memory-Bandwidth-Bound**!
+
+#### Scenario 5: "How does Rotary Position Embedding (RoPE) encode relative distance mathematically?"
+* **Answer**: RoPE pairs vector dimensions $(x_1, x_2), (x_3, x_4)$ and treats them as coordinates in 2D complex planes.
+  * Rotating vector $Q$ at position $m$ by angle $m\theta$: $R_m Q$.
+  * Rotating vector $K$ at position $n$ by angle $n\theta$: $R_n K$.
+  * The dot product between rotated vectors:
+    $$(R_m Q)^T (R_n K) = Q^T R_m^T R_n K = Q^T R_{n - m} K$$
+  * The resulting score depends **strictly on the relative distance $(n - m)$**, not the absolute index position! This enables smooth extrapolation to long contexts.
+
+#### Scenario 6: "What is the exact memory formula for the KV Cache per token?"
+* **Answer**: For each token, we must store Key and Value vectors for every layer:
+  $$\text{Bytes per Token} = 2 \times L \times h_{kv} \times d_k \times P$$
+  Where:
+  * $2$: Storing both $K$ and $V$.
+  * $L$: Number of Transformer layers (e.g. 80 in Llama 3 70B).
+  * $h_{kv}$: Number of KV attention heads (8 in Llama 3 GQA).
+  * $d_k$: Dimension per head (128).
+  * $P$: Precision in bytes (2 bytes for FP16/BF16).
+  $$\text{Bytes per Token} = 2 \times 80 \times 8 \times 128 \times 2 = 327,680 \text{ bytes} \approx 328 \text{ KB per token}$$
+  For 10 users generating 8,000 tokens: $10 \times 8,000 \times 328 \text{ KB} \approx \mathbf{26.2 \text{ GB of GPU VRAM}}$ purely for the KV cache!
+
+#### Scenario 7: "What is PagedAttention (vLLM) and how does it solve KV Cache memory fragmentation?"
+* **Answer**:
+  * Traditional serving frameworks pre-allocated a contiguous chunk of GPU memory for the maximum possible context length (e.g. 8,000 tokens). If the user only asked a 100-token question, 98% of the reserved memory was wasted (**Internal Fragmentation**).
+  * **PagedAttention (Inspired by OS Virtual Memory)**: Divides the KV cache into fixed-size **Blocks (e.g. 16 tokens per page)** stored in non-contiguous physical VRAM.
+  * A Block Table maps logical token positions to physical blocks on the fly, eliminating memory waste and increasing serving throughput by **$2\times$ to $4\times$**!
+
+#### Scenario 8: "Compare MHA vs. MQA vs. GQA in terms of parameter trade-offs."
+* **Answer**:
+  * **Multi-Head Attention (MHA - e.g. GPT-3)**: $h_q = 32, h_{kv} = 32$. High capacity, but KV cache eats maximum VRAM.
+  * **Multi-Query Attention (MQA)**: $h_q = 32, h_{kv} = 1$. Single shared Key/Value head. Slashes KV cache by 96%, but causes slight quality loss in complex multi-step reasoning.
+  * **Grouped-Query Attention (GQA - Llama 3, Mistral)**: $h_q = 32, h_{kv} = 8$. Groups of 4 Query heads share 1 Key/Value head. Matches MHA reasoning quality while reducing KV cache VRAM by **85%**!
+
+#### Scenario 9: "Why is standard Self-Attention $O(N^2)$ quadratic with sequence length?"
+* **Answer**: To calculate attention, Query matrix ($N \times d$) multiplies Key transpose ($d \times N$), producing an **$(N \times N)$ Attention Score matrix**.
+  * For 2,000 tokens: $2,000^2 = 4,000,000$ operations.
+  * For 128,000 tokens: $128,000^2 = \mathbf{16,384,000,000}$ operations!
+  * Every single token must compare itself to every other token. Doubling sequence length increases computation and activation memory by $4\times$ ($O(N^2)$).
+
+#### Scenario 10: "What is Speculative Decoding, and how does it speed up LLM generation by 2.5x?"
+* **Answer**:
+  * In standard autoregressive generation, generating 100 tokens requires 100 sequential forward passes of a heavy 70B model.
+  * **Speculative Decoding**:
+    1. A tiny, ultrafast **Draft Model** (e.g. 1B parameter model) quickly generates 5 candidate tokens in speculative draft mode.
+    2. The heavy **Target Model** (70B) runs a **single parallel forward pass** to verify all 5 candidate tokens simultaneously.
+    3. If tokens match the target model's distribution, they are accepted in one step!
+  * Because the target model verifies drafts in parallel, output text is **mathematically identical to raw 70B generation**, while speeding up wall-clock token output by **$2\times$ to $3\times$**!
 
 ---
 

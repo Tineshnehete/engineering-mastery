@@ -334,6 +334,37 @@ When the browser's HTML parser encounters a `<script src="bundle.js">`:
     }
     ```
 
+#### Scenario 5: "What is the difference between a Forward Proxy and a Reverse Proxy?"
+* **Answer**:
+  * **Forward Proxy (Protects/Represents the Client)**: Sits in front of client devices (e.g., corporate office proxy or VPN). The server sees the proxy's IP address, not the client's. Used to bypass geo-restrictions or filter outbound corporate traffic.
+  * **Reverse Proxy (Protects/Represents the Server)**: Sits in front of backend servers (e.g., NGINX, Cloudflare). Clients send requests to the proxy without knowing which internal backend server processes it. Used for load balancing, TLS termination, and DDoS protection.
+
+#### Scenario 6: "What is SNI (Server Name Indication) and why is it crucial for modern HTTPS hosting?"
+* **Answer**: Before SNI, the TLS handshake occurred *before* the HTTP request headers were transmitted. If a server hosted 10 different domains (`siteA.com`, `siteB.com`) on a single IP address, the server had no idea which certificate to present during the handshake, throwing certificate mismatch warnings.
+  * **SNI**: Sends the target hostname in cleartext inside the initial `ClientHello` TLS packet, enabling a single reverse proxy IP to host thousands of independent secure domains.
+
+#### Scenario 7: "How does a TCP SYN Flood DDoS attack work, and how do SYN Cookies defend against it?"
+* **Answer**:
+  * **The Attack**: An attacker sends millions of TCP `SYN` packets from spoofed fake IPs. The server allocates a connection block in the kernel's **SYN Backlog Queue** and waits with `SYN-ACK`. Because the IPs are fake, the final `ACK` never arrives; the backlog queue fills up, causing the server to reject legitimate users.
+  * **SYN Cookies**: The server **allocates ZERO memory** upon receiving a `SYN`! Instead, it encodes the client's IP, port, and timestamp into a cryptographic hash embedded directly into the initial sequence number of the `SYN-ACK`. Memory is only allocated when the client sends back the final `ACK` containing that verified cookie!
+
+#### Scenario 8: "What is HSTS (HTTP Strict Transport Security) Preloading?"
+* **Answer**: When a user types `mybank.com`, the browser initially attempts an insecure `http://` request, waiting for the server to send an HTTP `301 Redirect` to `https://`. An attacker executing a Man-In-The-Middle (MITM) attack can intercept that initial HTTP request (SSL Stripping).
+  * **HSTS Preload**: Browsers (Chrome, Firefox, Safari) ship with a hardcoded list of domains that **must NEVER use unencrypted HTTP**. Even on the very first visit, the browser converts the URL to `https://` internally before sending a single network packet.
+
+#### Scenario 9: "What is the difference between `Cache-Control: no-cache` and `Cache-Control: no-store`?"
+* **Answer**:
+  * **`no-cache`**: The browser **CAN store the response on disk**, but it **MUST revalidate with the server (`ETag`)** before serving it. If unchanged, the server returns `304 Not Modified` with zero payload.
+  * **`no-store`**: The response **MUST NEVER be written to disk, cache, or temporary storage under any circumstances**. Mandatory for banking statements, payment tokens, and medical records.
+
+#### Scenario 10: "Why is CORS (Cross-Origin Resource Sharing) enforced by the Browser and NOT the Server?"
+* **Answer**:
+  * CORS is an **in-browser security mechanism designed to protect the user, not the server**.
+  * If you are logged into your bank (`bank.com`) in Tab 1, your session cookie is stored in the browser. If you open a malicious website (`evil.com`) in Tab 2, evil JavaScript can execute `fetch('https://bank.com/api/transfer')`.
+  * The browser automatically attaches your bank cookie! To prevent `evil.com` from reading your bank balance, the browser blocks the response unless `bank.com` explicitly sends the header:
+    `Access-Control-Allow-Origin: https://evil.com`.
+  * Note: The server still processes the request; the **browser simply prevents malicious JavaScript from reading the returned data**!
+
 ---
 
 ## Chapter 02 Checklist (Summary)

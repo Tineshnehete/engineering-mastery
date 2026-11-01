@@ -472,6 +472,17 @@ Open Chrome browser, type `chrome://inspect`, click "Inspect", and you have a fu
 
 ### FAANG Interview Scenarios & Traps:
 
+```mermaid
+flowchart TD
+    subgraph EventLoopPhases["Node.js Event Loop Priority"]
+        Timers["1. Timers (setTimeout, setInterval)"] --> Micro1["⚡ DRAIN ALL MICROTASKS (Promises, nextTick)"]
+        Micro1 --> Poll["2. Poll / I/O Phase (Network, Files)"]
+        Poll --> Micro2["⚡ DRAIN ALL MICROTASKS"]
+        Micro2 --> Check["3. Check Phase (setImmediate)"]
+        Check --> Micro3["⚡ DRAIN ALL MICROTASKS"]
+    end
+```
+
 #### Scenario 1: "Why does `def append_to(item, target_list=[])` share items across calls in Python?"
 * **Answer**: In Python, **default arguments are evaluated ONCE at function definition time**, not each time the function is invoked! The list `[]` is created when the module is imported into memory; subsequent calls modify that same shared heap object.
   ```python
@@ -488,6 +499,70 @@ Open Chrome browser, type `chrome://inspect`, click "Inspect", and you have a fu
   * **Macrotasks**: `setTimeout`, `setInterval`, `setImmediate`, I/O callbacks.
   * **Microtasks**: `process.nextTick`, `Promise.then/catch/finally`, `queueMicrotask`.
   * **The Execution Priority**: After *every single macrotask* completes, Node.js **completely drains the entire Microtask queue** before picking up the next macrotask! If microtasks continuously schedule more microtasks, macrotasks (and network I/O) are starved indefinitely!
+
+#### Scenario 3: "What is Pass-by-Sharing, and why does reassignment not mutate the caller's variable?"
+* **Answer**: Both Python and JavaScript use **Pass-by-Sharing** (Call-by-Object-Sharing).
+  * When you pass an array to a function, you pass a copy of the **pointer/reference**.
+  * `target.push(99)` modifies the heap memory pointed to by that reference $\to$ Caller sees the mutation!
+  * `target = [99]` **reassigns the local pointer** to a brand-new heap address $\to$ Caller's pointer still points to the old memory!
+
+#### Scenario 4: "Why does `[] == ![]` evaluate to `true` in JavaScript?"
+* **Answer**: The infamous JS Type Coercion rabbit hole:
+  1. `!` has higher operator precedence: `[]` is an object (truthy), so `![]` becomes `false`. Expression is now: `[] == false`.
+  2. The equality operator `==` coerces booleans to numbers: `false` becomes `0`. Expression: `[] == 0`.
+  3. Comparing an object to a number coerces the object via `ToPrimitive()`: `[].toString()` becomes `""`. Expression: `"" == 0`.
+  4. Empty string `""` coerces to number `0`. Expression: `0 == 0`.
+  5. Result: **`true`**! This is why professional code always uses strict equality (`===`), which checks types without coercion!
+
+#### Scenario 5: "What is the difference between `is` and `==` in Python, and what is Small Integer Caching?"
+* **Answer**:
+  * `==` checks for **equality of values** (calls `__eq__()`).
+  * `is` checks for **identity of memory addresses** (equivalent to `id(a) == id(b)`).
+  * **Small Integer Caching**: CPython pre-allocates small integer objects from **`-5` to `256`** at startup.
+    ```python
+    a = 250; b = 250
+    print(a is b) # TRUE (Both point to pre-allocated CPython global pool)
+    
+    x = 1000; y = 1000
+    print(x is b) # FALSE (Separate heap objects allocated at different memory addresses!)
+    ```
+
+#### Scenario 6: "How does V8's Mark-and-Sweep garbage collection differ from Python's Reference Counting?"
+* **Answer**:
+  * **Python**: Primarily uses **Reference Counting**. Every object tracks how many variables point to it. The millisecond refcount reaches 0, memory is freed immediately. To handle circular loops (`A -> B -> A`), a secondary **Generational Cyclic GC** runs periodically.
+  * **V8 (JavaScript)**: Uses **Generational Mark-and-Sweep**:
+    * **Scavenger (Young Gen)**: Fast semi-space copying for short-lived temporary objects.
+    * **Major GC (Old Gen)**: Traverses the object graph starting from root pointers (`window`/`global`). Objects unreachable from roots are marked and swept during idle CPU cycles.
+
+#### Scenario 7: "What is the Python GIL (Global Interpreter Lock), and why does multi-threading fail on CPU-bound code?"
+* **Answer**: In CPython, memory management is not thread-safe. To prevent race conditions in reference counts, CPython uses the **GIL**—a global mutex allowing **only ONE OS thread to execute Python bytecode at any given moment**, even on a 64-core CPU!
+  * **I/O-bound code**: `threading` works great because threads release the GIL while waiting for network or disk.
+  * **CPU-bound code**: Multiple threads fight for the GIL mutex, running slower than a single thread due to locking overhead! You must use `multiprocessing` to spawn independent OS processes with separate memory spaces.
+
+#### Scenario 8: "What is a Closure, where are closed-over variables stored, and how do they leak memory?"
+* **Answer**: A closure is a function that retains access to variables from its outer lexical scope even after the outer function has returned.
+  * Even though the outer function's stack frame is popped, closed-over variables are **promoted to the Heap**.
+  * **Memory Leak**: If a large object is closed over by an event listener or long-lived timer callback, that entire outer scope's variables cannot be garbage collected, leaking memory.
+
+#### Scenario 9: "Why is `typeof null === 'object'` in JavaScript?"
+* **Answer**: It is a 30-year-old bug from JavaScript's first release in 1995! In the original JS C engine, values were stored with a type tag in the lower 3 bits. The type tag for objects was `000`. Because `null` was represented as the null pointer (`0x00`), its type bits evaluated to `000`, causing `typeof` to return `'object'`. It was never fixed because fixing it would break millions of legacy websites.
+
+#### Scenario 10: "Why can't you use `await` inside a standard `forEach` loop in JavaScript?"
+* **Answer**: `Array.prototype.forEach` does not await promises; it executes the callback synchronously for each element without waiting:
+  ```javascript
+  // DANGEROUS: Fires all requests concurrently without awaiting!
+  items.forEach(async (item) => {
+      await saveToDatabase(item);
+  });
+  console.log("Done"); // Prints BEFORE database writes finish!
+  
+  // FIX: Use for...of loop for sequential await:
+  for (const item of items) {
+      await saveToDatabase(item);
+  }
+  // Or Promise.all for parallel execution:
+  await Promise.all(items.map(item => saveToDatabase(item)));
+  ```
 
 ---
 
