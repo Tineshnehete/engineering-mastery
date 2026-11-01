@@ -1,0 +1,311 @@
+# Chapter 02: Web Architecture 101 — "What Happens When You Type a URL?"
+
+> **Welcome to Chapter 02!**
+> "What happens when you type `https://google.com` in your browser and press Enter?" is the single most famous interview question in the entire software industry.
+> 
+> Interviewers at Google, Amazon, and Microsoft ask this question because it tests whether you truly understand how the internet connects computers together across physical cables, operating systems, networking protocols, and browser rendering engines.
+> 
+> In this chapter, we will walk through the entire journey from your keyboard to the server and onto your screen pixels, explained in simple English with clear diagrams.
+
+---
+
+## 1. High-Level Map of the Journey
+
+Before diving into details, look at the big picture of what happens in less than **200 milliseconds**:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as You (Browser)
+    participant DNS as DNS Servers (Phonebook)
+    participant LB as Reverse Proxy / Load Balancer (NGINX)
+    participant App as Backend Server (Python/Node)
+    participant DB as Database (Postgres)
+
+    User->>DNS: 1. Who is "google.com"? What is its IP address?
+    DNS-->>User: IP is 142.250.190.46
+    
+    User->>LB: 2. TCP 3-Way Handshake (SYN, SYN-ACK, ACK)
+    User->>LB: 3. TLS Handshake (Secure HTTPS Encryption)
+    User->>LB: 4. HTTP GET / Request sent!
+    
+    LB->>App: 5. Route request to internal backend
+    App->>DB: 6. Query user data (SQL)
+    DB-->>App: Return rows
+    
+    App-->>LB: Return JSON / HTML response
+    LB-->>User: 7. HTTP 200 OK + Payload
+    Note over User: 8. Browser Critical Rendering Path:<br/>DOM + CSSOM -> Render Tree -> Layout -> Paint!
+```
+
+---
+
+## 2. Step 1: DNS Resolution (Finding the Phone Number)
+
+Computers on the internet do not understand names like `google.com` or `amazon.in`. They only understand numeric **IP Addresses** (e.g., `142.250.190.46`).
+
+The **DNS (Domain Name System)** is simply the **global phonebook of the internet**.
+
+### The 4-Level Lookup Hierarchy
+When you type `google.com`, your computer searches in 4 levels of caches:
+
+```mermaid
+flowchart TD
+    User["You type: google.com"] --> C1{"1. Browser Cache"}
+    C1 --"Found"--> IP["Get IP instantly (0 ms)"]
+    C1 --"Miss"--> C2{"2. OS Hosts File / Cache"}
+    C2 --"Found"--> IP
+    C2 --"Miss"--> C3{"3. Resolver (ISP / Wi-Fi Router)"}
+    C3 --"Found"--> IP
+    C3 --"Miss"--> C4["4. The Root Server ('.')"]
+    C4 --> TLD["TLD Server ('.com')"]
+    TLD --> Auth["Authoritative Name Server ('google.com')"]
+    Auth --> IP
+```
+
+1. **Browser Cache**: Chrome or Firefox checks if you visited this site in the last 5 minutes.
+2. **OS Cache & Hosts File**: Your computer checks its local operating system memory and `/etc/hosts` file.
+3. **Recursive DNS Resolver**: Your local Wi-Fi router or ISP (e.g., Airtel, Jio, or Google DNS `8.8.8.8`).
+4. **The Global Chain**:
+   * **Root Server (`.`)**: Points to the `.com` manager.
+   * **TLD (Top-Level Domain) Server (`.com`)**: Points to Google’s registered nameservers.
+   * **Authoritative Nameserver**: The final authority. It returns the exact IP address: `142.250.190.46`.
+
+### The 4 Common DNS Record Types Every Engineer Must Know:
+* **`A` Record**: Maps a domain name directly to an **IPv4 address** (`google.com` $\to$ `142.250.190.46`).
+* **`AAAA` Record**: Maps to an **IPv6 address** (`2404:6800:4009:830::200e`).
+* **`CNAME` (Canonical Name)**: An alias that points one name to another name (e.g., `api.mysite.com` $\to$ `my-loadbalancer.aws.com`).
+* **`MX` Record**: Specifies which mail servers handle incoming emails for `@company.com`.
+
+---
+
+## 3. Step 2: The TCP 3-Way Handshake (Establishing the Call)
+
+Now your browser knows the server's IP address. But before sending data, it must establish a reliable connection.
+
+Websites use **TCP (Transmission Control Protocol)** because it guarantees that **no data is lost**.
+
+### The 3-Step Handshake:
+Think of TCP like two people calling each other on a mobile phone:
+
+```mermaid
+sequenceDiagram
+    participant C as Your Browser (Client)
+    participant S as Google Server (142.250.190.46)
+
+    C->>S: 1. SYN (Synchronize): "Hello, can you hear me? My sequence is 100."
+    S->>C: 2. SYN-ACK: "Yes, I hear you! My sequence is 500, and I acknowledge your 101."
+    C->>S: 3. ACK (Acknowledge): "Great, I hear you too! Connection established."
+    Note over C,S: Pipe is open! Now real data can flow.
+```
+
+### TCP Slow Start (Why Downloads Start Slow and Speed Up)
+When a TCP connection opens, it doesn't immediately blast 100 Megabytes at full speed:
+1. It sends 10 packets. If acknowledged without packet loss, it doubles to 20 packets.
+2. Then 40 packets, then 80 packets (**Exponential Growth**).
+3. This is called **TCP Slow Start** (Congestion Control). It tests how much bandwidth your Wi-Fi/cable can handle without dropping packets.
+
+---
+
+## 4. Step 3: TLS 1.3 Handshake (HTTPS Encryption)
+
+If you only use plain HTTP, anyone sitting in the same Starbucks Wi-Fi can open Wireshark and read your passwords and credit cards in plain text!
+
+**HTTPS** is simply **HTTP running over an encrypted TLS (Transport Layer Security) tunnel**.
+
+```mermaid
+flowchart LR
+    Plain["Plain Data:<br/>'password=secret123'"] -->|"TLS Encryption"| Garbage["Encrypted Garbage:<br/>'a8F#9x!@zL99'"]
+    Garbage -->|"Internet Cables (Safe from hackers)"| Server["Server"]
+    Server -->|"TLS Decryption"| Plain2["Plain Data:<br/>'password=secret123'"]
+```
+
+### How the TLS Handshake Works:
+1. **Asymmetric Encryption (Heavy but secure)**:
+   * The server shares its **Public SSL Certificate** (verified by trusted authorities like DigiCert or Let's Encrypt).
+   * Your browser verifies that the certificate actually belongs to `google.com` and hasn't expired.
+2. **Key Exchange (Diffie-Hellman)**:
+   * Both sides combine mathematical keys to calculate a temporary shared **Symmetric Session Key** without sending the key itself over the wire.
+3. **Symmetric Encryption (Fast)**:
+   * For the rest of the session, all messages are encrypted with this shared key because symmetric encryption is $1,000\times$ faster for the CPU than asymmetric encryption!
+
+---
+
+## 5. Step 4: HTTP Caching & Conditional Requests (`ETag` & `304`)
+
+Before your browser requests a 5MB JavaScript file from the server, it checks its local disk cache.
+
+How does HTTP caching save millions of dollars in bandwidth?
+
+```mermaid
+sequenceDiagram
+    participant Browser as Browser
+    participant Server as Server
+
+    Note over Browser,Server: Request 1 (First visit on Monday)
+    Browser->>Server: GET /bundle.js
+    Server-->>Browser: 200 OK + File + ETag: "abc123v1" + Cache-Control: max-age=86400
+
+    Note over Browser,Server: Request 2 (Visit on Tuesday)
+    Browser->>Server: GET /bundle.js<br/>If-None-Match: "abc123v1"
+    Server-->>Browser: 304 Not Modified! (0 bytes payload!)
+    Note over Browser: Browser reuses cached copy from local SSD instantly!
+```
+
+### The 3 Critical Cache Headers:
+* **`Cache-Control: max-age=3600`**: Cache this file on the user's laptop for 1 hour. Do not ask the server again during this time!
+* **`Cache-Control: no-cache`**: You can cache the file, but you **must ask the server (`ETag`)** before using it to confirm it hasn't changed.
+* **`Cache-Control: no-store`**: **NEVER save to disk or cache** (used for bank account balances, medical records, and credit card pages).
+* **`ETag` & `If-None-Match`**: An `ETag` is a hash of the file. If the file hasn't changed, the server returns **`304 Not Modified`** with zero payload bytes!
+
+### Hands-on Code: How Servers Handle `ETag` and `304 Not Modified`
+
+#### 1. Python (`http.server`):
+```python
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import hashlib
+
+DATA = b"console.log('Bundle v1.0');"
+FILE_ETAG = f'"{hashlib.md5(DATA).hexdigest()}"'
+
+class ETagHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        client_etag = self.headers.get("If-None-Match")
+        if client_etag == FILE_ETAG:
+            # 304 Not Modified: Browser uses local cache, 0 bytes body transferred!
+            self.send_response(304)
+            self.end_headers()
+            return
+
+        self.send_response(200)
+        self.send_header("ETag", FILE_ETAG)
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Content-Length", str(len(DATA)))
+        self.end_headers()
+        self.wfile.write(DATA)
+```
+
+#### 2. JavaScript (Node.js `http`):
+```javascript
+const http = require('http');
+const crypto = require('crypto');
+
+const DATA = "console.log('Bundle v1.0');";
+const FILE_ETAG = `"${crypto.createHash('md5').update(DATA).digest('hex')}"`;
+
+const server = http.createServer((req, res) => {
+    if (req.headers['if-none-match'] === FILE_ETAG) {
+        // 304 Not Modified: Tell client to reuse its local copy!
+        res.writeHead(304);
+        res.end();
+        return;
+    }
+
+    res.writeHead(200, {
+        'ETag': FILE_ETAG,
+        'Cache-Control': 'no-cache',
+        'Content-Type': 'application/javascript',
+        'Content-Length': Buffer.byteLength(DATA)
+    });
+    res.end(DATA);
+});
+```
+
+---
+
+## 6. Step 5: Reverse Proxy & Load Balancer (NGINX)
+
+When your request arrives at Google or Amazon, it doesn't hit a Python or Node.js server directly. It hits a **Reverse Proxy / Load Balancer** (like **NGINX**, **Envoy**, or **HAProxy**).
+
+```mermaid
+flowchart LR
+    User["Internet Traffic<br/>(100,000 requests/sec)"] --> LB["NGINX Load Balancer<br/>(Port 443 HTTPS)"]
+    LB -->|"TLS Terminated (HTTP:8000)"| S1["Backend Server 1 (Python)"]
+    LB -->|"TLS Terminated (HTTP:8000)"| S2["Backend Server 2 (Python)"]
+    LB -->|"TLS Terminated (HTTP:8000)"| S3["Backend Server 3 (Python)"]
+```
+
+### What does the Reverse Proxy do?
+1. **TLS Termination**: It does the heavy math of decrypting HTTPS once, passing cheap unencrypted HTTP to internal backend servers inside the private network.
+2. **Load Balancing**: It distributes traffic among hundreds of internal servers using algorithms like **Round Robin** or **Least Connections**.
+3. **DDoS Protection**: It drops bad requests before they ever reach your database.
+4. **Static File Caching**: It serves images, CSS, and JavaScript files directly from RAM without bothering the Python/Node.js app.
+
+---
+
+## 7. Step 6: Application Server & Database Execution
+
+Now your backend code receives the request:
+
+```mermaid
+flowchart TD
+    Req["Incoming HTTP Request"] --> Router["1. Router: Matches path '/api/user/10'"]
+    Router --> Middleware["2. Middleware: Validates JWT token & rate limits"]
+    Middleware --> Controller["3. Controller: Business logic"]
+    Controller --> DBQuery["4. SQL: SELECT * FROM users WHERE id = 10"]
+    DBQuery --> DB["PostgreSQL Database"]
+    DB --> Serialization["5. Serialization: Converts SQL row into JSON object"]
+    Serialization --> Resp["6. Send HTTP 200 OK Response"]
+```
+
+---
+
+## 8. Step 7: Browser Critical Rendering Path (Painting Pixels)
+
+Once the browser receives the HTML document, how does it turn text into visual buttons and images on your screen?
+
+```mermaid
+flowchart TD
+    HTML["HTML Text"] -->|"Parser"| DOM["DOM Tree (HTML Nodes)"]
+    CSS["CSS Text"] -->|"Parser"| CSSOM["CSSOM Tree (Styles)"]
+    
+    DOM & CSSOM --> RenderTree["Render Tree (Visible Elements Only)"]
+    RenderTree --> Layout["Layout / Reflow (Calculate exact x, y, width, height)"]
+    Layout --> Paint["Paint (Fill in colors, shadows, borders)"]
+    Paint --> Composite["Composite (Combine layers onto GPU screen)"]
+```
+
+### Why `<script>` Tags at the Top Freeze the Page (Parser-Blocking):
+When the browser's HTML parser encounters a `<script src="bundle.js">`:
+1. It **halts the HTML parser completely**!
+2. It waits for the network to download the JavaScript file.
+3. It executes the JavaScript before parsing the rest of the HTML.
+4. **Result**: A blank white screen for 2 seconds!
+
+#### The Fix: `async` vs. `defer`
+```html
+<!-- BAD: Freezes HTML parser -->
+<script src="app.js"></script>
+
+<!-- GOOD (defer): Downloads in background, executes ONLY after HTML is parsed! -->
+<script src="app.js" defer></script>
+
+<!-- ASYNC: Downloads in background, executes immediately when ready (great for Google Analytics) -->
+<script src="analytics.js" async></script>
+```
+
+---
+
+## 9. Interview Scenarios & Traps (Google & FAANG)
+
+### Scenario 1: "What is the difference between 502 Bad Gateway and 504 Gateway Timeout?"
+* **502 Bad Gateway**: The reverse proxy (NGINX) reached out to the backend (Python app), but the Python app was **dead, not running, or refused the connection immediately** (`Connection Refused`).
+* **504 Gateway Timeout**: The reverse proxy connected to the Python app, but the Python app **hung waiting for a slow SQL database query** and didn't respond within 30 seconds (`Request Timed Out`).
+
+### Scenario 2: "What is the difference between HTTP/1.1, HTTP/2, and HTTP/3?"
+* **HTTP/1.1**: Suffered from **Head-of-Line (HoL) Blocking**. If you needed 20 images, the browser had to open 6 separate TCP connections, downloading them sequentially.
+* **HTTP/2**: Introduced **Multiplexing over a single TCP connection**. Multiple requests and responses can interleave simultaneously on one connection using binary framing.
+* **HTTP/3 (QUIC)**: Replaced TCP with **UDP-based QUIC protocol**. Eliminates TCP head-of-line blocking when packet loss occurs on mobile networks!
+
+---
+
+## Chapter 02 Checklist (Summary)
+
+Before moving to Chapter 03, verify that you can answer these:
+- [x] What are the 4 layers of DNS resolution?
+- [x] Why does TCP use a 3-way handshake, and what is TCP Slow Start?
+- [x] How do `ETag` and `If-None-Match` return a `304 Not Modified` to save bandwidth?
+- [x] What are the steps of the Browser Critical Rendering Path (DOM + CSSOM $\to$ Render Tree $\to$ Layout $\to$ Paint)?
+- [x] What is the difference between `<script defer>` and `<script async>`?
+
+*Chapter 02 is complete! Proceed to [Chapter 03: Databases 101](./chapter_03.md).*
