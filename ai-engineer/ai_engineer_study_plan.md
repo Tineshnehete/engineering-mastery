@@ -6,6 +6,9 @@ A rigorous, ground-up curriculum designed to transition from high-level wrapper 
 
 ## Progress Tracker & Timeline Overview
 
+- [ ] **🎯 Immediate Priority Chapters (Job Screen Fast-Track)**:
+  - **Part 3 & 4 (RAG & pgvector)**: **Chapter 12** *(pgvector & HNSW tuning)*, **Chapter 13** *(Hybrid Search & Reranking)*, **Chapter 14** *(Chunking & Ingestion)*
+  - **Part 5 & 6 (Agents & LangGraph)**: **Chapter 18** *(Tool Calling)*, **Chapter 19** *(ReAct from scratch)*, **Chapter 20** *(LangGraph state machines)*
 - [ ] **Month 1**: Part 0 *(Math, Tensors & Neural Nets from Scratch)* + Part 1 *(Transformer Internals & Training Stages)*
 - [ ] **Month 2**: Part 2 *(GPU VRAM Math & Quantization)* + Part 3 *(Embeddings, HNSW & Vector DB Internals)*
 - [ ] **Month 3**: Part 4 *(Production RAG Architecture)* + Part 5 *(Constrained Decoding & Tool Calling Protocols)*

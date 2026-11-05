@@ -6,6 +6,7 @@ A structured, side-by-side study guide designed for developers transitioning fro
 
 ## Progress Tracker & Timeline Overview
 
+- [x] **⚡ Fast-Track Interview Sprint**: **[FastAPI & SQLAlchemy Internals: High-Concurrency Async Architecture, Connection Pooling, N+1 Query Prevention & Dependency Injection](./fast_track_fastapi_sqlalchemy.md)** *(Mandatory for Cybotrix, Task Harmony, Brilo AI, Cutshort screens)*
 - [ ] **Month 1**: Part 0 *(Prerequisites Zero: Mental Models, Package Managers, File Systems, Serialization, Debugging)* + Chapters 05 – 11 *(Runtimes, Scopes, Types, IEEE 754 Floats, Unicode, Collections, Timsort, Buffers)*
 - [ ] **Month 2**: Chapters 12 – 22 *(Closures, Functional Patterns, OOP vs Prototypes, `__new__` vs `__init__`, Metaprogramming, Iterators, Generators, Asyncio vs Event Loop, Microtask Starvation, Streams, Networking)*
 - [ ] **Month 3**: Chapters 23 – 37 *(DOM/Web APIs, CORS, WSGI/ASGI vs Middleware, Concurrency, Multiprocessing, GC, Security, Containers, Testing, Profiling)*
@@ -188,10 +189,15 @@ A structured, side-by-side study guide designed for developers transitioning fro
 
 ## Part 4: Web Servers, DOM & Web Security
 
-### Chapter 24: Web Server Architectures (WSGI/ASGI vs. Middleware Pipelines)
+### Chapter 24: Web Server Architectures (WSGI/ASGI vs. Middleware Pipelines) & Database ORM Internals
 - [ ] **Python**:
   - The Synchronous Standard: **WSGI** (`gunicorn`, `uWSGI`, Django, Flask) — 1 request per worker thread/process.
   - The Asynchronous Standard: **ASGI** (`uvicorn`, `FastAPI`, `Starlette`) — Coroutine-based request handling for high concurrency.
+  - The Thread Pool Trap: When `def` runs in `anyio` thread pool vs. when `async def` runs on the event loop.
+  - **SQLAlchemy 2.0 Async Architecture**: `AsyncEngine`, `AsyncSession`, `asyncpg` driver, Greenlet context switching (`greenlet_spawn`), `expire_on_commit=False`.
+  - **Connection Pooling & Scale**: `pool_size`, `max_overflow`, `pool_pre_ping`, PgBouncer transaction pooling, VizioFly 60% load cut case study.
+  - **Eager Loading Strategies**: `selectinload` (best for 1-to-many, zero Cartesian multiplication) vs `joinedload` vs `contains_eager`.
+  - *Sprint Chapter*: ⚡ **[Read FastAPI & SQLAlchemy Internals Guide](./fast_track_fastapi_sqlalchemy.md)**
 - [ ] **JavaScript / Node.js**:
   - The Middleware Onion Model: Express `(req, res, next) => {}`.
   - Asynchronous middleware pipelines: Fastify & Koa async execution stacks.
@@ -246,9 +252,13 @@ A structured, side-by-side study guide designed for developers transitioning fro
 - [ ] **Python**: `try...except...else...finally`, `BaseException` vs `Exception`, Context Managers (`with`, `__enter__`/`__exit__`).
 - [ ] **JavaScript**: `try...catch...finally`, Error causality, Explicit Resource Management (`using`, `Symbol.dispose`).
 
-### Chapter 33: Module Systems & Modern Type Systems
-- [ ] **Python**: `import` algorithm, `sys.modules`, `sys.path`, type hints (`typing.Protocol`, `mypy`, `pydantic`).
-- [ ] **JavaScript**: CommonJS vs ES Modules, TypeScript structural type system comparison, JSDoc annotations.
+### Chapter 33: Module Systems & Modern Type Systems (Python Typing & TypeScript)
+- [ ] **Python**: `import` algorithm, `sys.modules`, `sys.path`, type hints (`typing.Protocol`, `mypy`, `pydantic v2` Core Rust validation).
+- [ ] **JavaScript / TypeScript Full-Stack Depth**:
+  - CommonJS vs ES Modules: `require()` sync evaluation vs ESM static asynchronous tree parsing.
+  - **TypeScript Core Primitives**: Structural typing ("duck typing"), Generics (`<T>`), Utility types (`Partial`, `Pick`, `Omit`, `Record`).
+  - **Type Narrowing & Discriminated Unions**: Exhaustive `switch` matching with `never` type check.
+  - **Runtime Schema Validation**: **Zod** schema inference (`z.infer<typeof Schema>`) matching Python Pydantic models across full-stack endpoints.
 
 ### Chapter 34: Containerization & Docker for Python & Node.js
 - [ ] **Python**:

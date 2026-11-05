@@ -1,6 +1,33 @@
 # Master Engineering & Applied AI Curriculum
 
-A structured, first-principles study curriculum organized into three focused tracks to transition from copy-pasting/framework usage to top-tier technical depth.
+A structured, first-principles study curriculum organized into three focused tracks to transition from copy-pasting/framework usage to top-tier technical depth, paired with targeted interview sprint modules for ongoing job hunts.
+
+---
+
+## ⚡ Fast-Track Interview Sprint Modules (Immediate Job Hunt Accelerators)
+
+Designed to plug high-frequency gaps in technical screens (Cutshort, Instahyre, Naukri, Cybotrix, Task Harmony, Brilo AI, PocketFM, Medanta):
+
+* **[FastAPI & SQLAlchemy Internals: Async Architecture, Connection Pooling & N+1 Prevention](./python-javascript/fast_track_fastapi_sqlalchemy.md)** — The ASGI execution model, why `async def` freezes your event loop, Greenlet bridge, `selectinload` vs `joinedload`, connection pool sizing math, and the VizioFly 60% load reduction case study.
+* **[Message Queues Deep Dive: Kafka vs. RabbitMQ](./google-sde/fast_track_message_queues.md)** — Partition-based commit logs vs AMQP smart brokers, Kafka Zero-Copy OS page cache mechanics (`sendfile`), Consumer group rebalancing, RabbitMQ DLX dead-letter retry loops, and the Transactional Outbox pattern.
+* **[Operational DevOps Cheatsheet: Kubernetes, Terraform & GitHub Actions CI/CD](./google-sde/fast_track_devops.md)** — Pod lifecycle & probe death spirals, OOMKilled (Exit 137), 5-minute `kubectl` production triage, Terraform remote state locking with S3 & DynamoDB, and AWS IAM OIDC GitHub Actions deployments.
+
+---
+
+## 🎯 Immediate Chapter Generation Priorities
+
+To balance DSA rounds with Senior AI Engineering screens, the next chapters to be written are prioritized as follows:
+
+1. **AI Engineering Core (Interviews & Take-Homes)**:
+   * **[Chapter 12: Production Vector Storage & pgvector](./ai-engineer/chapter_12.md)** (HNSW index tuning, relational + vector filtering)
+   * **[Chapter 13: Hybrid Search & Cross-Encoder Reranking](./ai-engineer/chapter_13.md)** (BM25 + Dense embeddings, RRF, Cohere rerank)
+   * **[Chapter 14: Ingestion Pipelines & Advanced Chunking](./ai-engineer/chapter_14.md)** (Semantic, parent-child, lost-in-the-middle)
+   * **[Chapter 18: Tool & Function Calling Under the Hood](./ai-engineer/chapter_18.md)** (JSON Schema, self-healing tool execution)
+   * **[Chapter 19: Building a ReAct Agent from Scratch](./ai-engineer/chapter_19.md)** (Pure Python ReAct loop without LangChain)
+   * **[Chapter 20: Stateful Agent State Machines with LangGraph](./ai-engineer/chapter_20.md)** (Cyclic graphs, Human-in-the-Loop, checkpoints)
+2. **Core DSA & Problem Solving (Daily LeetCode Mediums)**:
+   * **[Chapter 13: Binary Trees, BSTs & Invariant Traversal](./google-sde/chapter_13.md)** (LCA, BFS/DFS, serialization)
+   * **[Chapter 17: Graph Theory I — Fundamentals & Traversal](./google-sde/chapter_17.md)** (Adjacency lists, BFS shortest path, 3-color cycle detection)
 
 ---
 

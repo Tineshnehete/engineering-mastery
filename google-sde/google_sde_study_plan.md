@@ -6,6 +6,12 @@ A complete, ground-up curriculum designed for self-taught engineers transitionin
 
 ## Progress Tracker & Timeline Overview
 
+- [x] **⚡ Fast-Track Interview Sprint**:
+  - **[Message Queues Deep Dive: Kafka vs. RabbitMQ](./fast_track_message_queues.md)** *(Mandatory for PocketFM, Medanta, 1digitalstack, Linkrunner)*
+  - **[Operational DevOps Cheatsheet: Kubernetes, Terraform & GitHub Actions CI/CD](./fast_track_devops.md)** *(Mandatory for SRE & Senior Backend roles)*
+- [ ] **🎯 Immediate Priority DSA Chapters**:
+  - **Chapter 13: Binary Trees, BSTs & Invariant Traversal** *(Daily LeetCode Medium staple)*
+  - **Chapter 17: Graph Theory I — Fundamentals & Traversal** *(DFS/BFS, cycles, topological sort)*
 - [ ] **Month 1**: Part 0 *(Prerequisites Zero: Hardware, Linux, Web Flow, DB 101, Git)* + Chapters 05 – 11 *(Math, Two Pointers, Intervals, Stacks, Binary Search, Heaps)*
 - [ ] **Month 2**: Chapters 12 – 20 *(Linked Lists, Hybrid DS, Trees, Probabilistic DS, Graphs, DSU, Range Queries)*
 - [ ] **Month 3**: Chapters 21 – 28 *(Backtracking, 1D/2D/Bitmask DP, LLD, Concurrency, Estimation Math, High-Scale Bottlenecks)*
@@ -157,9 +163,10 @@ A complete, ground-up curriculum designed for self-taught engineers transitionin
 ### Chapter 24: Object-Oriented Principles & Clean Code
 - [ ] SOLID principles, decoupling interfaces, code smell detection.
 
-### Chapter 25: Design Patterns & Concurrency Primitives
+### Chapter 25: Design Patterns, Concurrency & Message Queues
 - [ ] Factory, Strategy, Observer, Decorator.
 - [ ] Mutex, Semaphore, Read-Write Locks, Producer-Consumer queue, Deadlock prevention.
+- [ ] *Sprint Chapter*: ⚡ **[Read Message Queues Deep Dive: Kafka vs. RabbitMQ](./fast_track_message_queues.md)**
 
 ---
 
@@ -210,9 +217,10 @@ A complete, ground-up curriculum designed for self-taught engineers transitionin
 ### Chapter 33: System Security, Auth & Threat Mitigation
 - [ ] OAuth2, JWT verification, RBAC, TLS termination, SQLi, XSS, CSRF, DDoS mitigation.
 
-### Chapter 34: Containers, CI/CD & Production Deployment
+### Chapter 34: Containers, Kubernetes, Terraform & CI/CD
 - [ ] Linux Namespaces + Cgroups isolation (containers vs VMs).
 - [ ] Rolling Deployment, Blue/Green Deployment, Canary Deployment (1% traffic canary).
+- [ ] *Sprint Chapter*: ⚡ **[Read Operational DevOps Cheatsheet: Kubernetes, Terraform & GitHub Actions CI/CD](./fast_track_devops.md)**
 
 ### Chapter 35: Classic Distributed System Blueprints
 - [ ] Rate Limiter, TinyURL, Distributed Key-Value Store, Notification System.
